@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Galaxy star movement demo</title>
+<style>
+	html, body { margin: 0; padding: 0; height: 100%; background: #04040a; color: #cfd2e0;
+		font: 12px/1.45 system-ui, sans-serif; }
+	#wrap { display: flex; height: 100vh; }
+	#stage { position: relative; flex: 1; min-width: 0; }
+	#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+	#hud { position: absolute; top: 8px; left: 10px; color: #e8eaf5; font-family: monospace;
+		font-size: 12px; text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
+	#plot { position: absolute; left: 10px; bottom: 10px; background: rgba(6,6,14,.82);
+		border: 1px solid #2a2d45; border-radius: 4px; padding: 4px; }
+	#plot canvas { display: block; }
+	#panel { width: 238px; flex: none; overflow-y: auto; background: #0a0b16;
+		border-left: 1px solid #23263c; padding: 10px 12px; }
+	#panel h1 { font-size: 14px; margin: 0 0 8px; color: #f0f1fa; }
+	#panel h2 { font-size: 11px; margin: 12px 0 4px; color: #8f93b0; text-transform: uppercase;
+		letter-spacing: .06em; }
+	.row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+	.row label { flex: 0 0 86px; color: #b9bcd4; }
+	.row output { flex: 0 0 44px; text-align: right; font-family: monospace; color: #e8eaf5; }
+	.row input[type=range] { flex: 1; min-width: 0; }
+	.chk { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+	.chk label { display: flex; gap: 4px; align-items: center; color: #b9bcd4; cursor: pointer; }
+	.btns { display: flex; gap: 6px; margin: 6px 0; }
+	button { flex: 1; background: #1c1e33; color: #e8eaf5; border: 1px solid #34385c;
+		border-radius: 4px; padding: 5px 0; cursor: pointer; font-size: 12px; }
+	button.on { background: #2c4a3a; border-color: #4a7a5c; }
+	button:hover { background: #262845; }
+	#legend { margin-top: 4px; }
+	#legend span { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+		margin-right: 5px; vertical-align: baseline; }
+	#legend div { margin: 1px 0; color: #b9bcd4; }
+	details { margin-top: 10px; color: #b9bcd4; }
+	details summary { cursor: pointer; color: #e8eaf5; }
+	#settle { position: absolute; inset: 0; display: flex; align-items: center;
+		justify-content: center; background: rgba(4,4,10,.55); color: #e8eaf5;
+		font-size: 14px; pointer-events: none; }
+	#settle[hidden] { display: none; }
+	kbd { background: #1c1e33; border: 1px solid #34385c; border-radius: 3px;
+		padding: 0 4px; font-family: monospace; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+	<div id="stage">
+		<canvas id="view"></canvas>
+		<div id="hud"></div>
+		<div id="plot"><canvas id="rot" width="232" height="150"></canvas></div>
+		<div id="settle" hidden>settling…</div>
+	</div>
+	<div id="panel">
+		<h1>Galaxy star movement</h1>
+		<h2>Stars</h2>
+		<div class="btns" id="nbtns">
+			<button data-n="1000">1k</button>
+			<button data-n="4000" class="on">4k</button>
+			<button data-n="10000">10k</button>
+		</div>
+		<h2>Run</h2>
+		<div class="row"><label>speed</label><input id="s-speed" type="range" min="0.02" max="0.2" step="0.01" value="0.1"><output id="o-speed"></output></div>
+		<div class="row"><label>tilt</label><input id="s-tilt" type="range" min="0" max="60" step="1" value="20"><output id="o-tilt"></output></div>
+		<div class="btns">
+			<button id="b-pause">pause</button>
+			<button id="b-step">step</button>
+			<button id="b-reset">reset</button>
+		</div>
+		<h2>Field</h2>
+		<div class="row"><label>bar Ab</label><input id="s-ab" type="range" min="0" max="0.15" step="0.005" value="0.06"><output id="o-ab"></output></div>
+		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.02"><output id="o-as"></output></div>
+		<div class="row"><label>bar Ωb</label><input id="s-ob" type="range" min="0.2" max="0.6" step="0.01" value="0.4"><output id="o-ob"></output></div>
+		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.4" step="0.01" value="0.25"><output id="o-os"></output></div>
+		<h2>Friction (teaching)</h2>
+		<div class="row"><label>drag η</label><input id="s-eta" type="range" min="0" max="0.1" step="0.005" value="0.05"><output id="o-eta"></output></div>
+		<div class="row"><label>diffus σ</label><input id="s-sig" type="range" min="0" max="0.2" step="0.01" value="0.1"><output id="o-sig"></output></div>
+		<h2>Overlays</h2>
+		<div class="chk">
+			<label><input id="c-bar" type="checkbox" checked>bar</label>
+			<label><input id="c-spiral" type="checkbox" checked>spiral</label>
+			<label><input id="c-stream" type="checkbox" checked>stream</label>
+			<label><input id="c-drag" type="checkbox">drag</label>
+			<label><input id="c-diff" type="checkbox">drag+diff</label>
+			<label><input id="c-trails" type="checkbox">trails</label>
+			<label><input id="c-rings" type="checkbox" checked>rings</label>
+			<label><input id="c-rot" type="checkbox" checked>rotcurve</label>
+			<label><input id="c-corot" type="checkbox">corot</label>
+		</div>
+		<h2>Legend</h2>
+		<div id="legend"></div>
+		<details>
+			<summary>ⓘ approach</summary>
+			<p>Every star feels one fixed “field”: the galaxy's gravitational potential, built
+			from smooth components (thin + thick disk, bulge, halo) plus two rigidly rotating
+			m=2 waves — a bar and a logarithmic spiral. Stars are integrated on their own
+			orbits with a symplectic leapfrog; there are no star–star forces and no friction.</p>
+			<p>The spiral arms are not material — they are the rotating crests of the field
+			where stars bunch up as they pass, so the pattern never winds up while each star
+			streams through it. The bar works the same way: inside corotation its field
+			captures stars onto elongated resonant (x1) orbits, feeding the bar; at resonances
+			stars trade angular momentum with the pattern and migrate — outward into rings, or
+			onto eccentric inclined orbits that puff into the halo belt. That is how disk turns
+			into bar and belt without spawning anything.</p>
+			<p>Because the system is Hamiltonian — dissipation free, symplectically integrated —
+			nothing decays, nothing clumps; the same stars are there forever. (Optional “drag”
+			toggle shows the opposite: pure friction piles stars into the center — why friction
+			is the wrong tool here.)</p>
+			<p>Keys: <kbd>space</kbd> pause <kbd>s</kbd> step <kbd>r</kbd> reset
+			<kbd>c</kbd> corot <kbd>1..5</kbd> stream/trails/rings/rotcurve/drag.</p>
+		</details>
+	</div>
+</div>
+<script src="galaxy.js"></script>
+<script>
+(function() {
+'use strict';
+var NMAX = 10000, DT = 0.01, NTR = 8, TRN = 256, NEJ = 128;
+var CLS = ['thin disk', 'thick disk', 'bulge', 'halo belt', 'stream'];
+var COL = ['#fff4e0', '#ffcf9e', '#ff9a66', '#cfe4ff', '#54f6ff'];
+
+var P = Galaxy.defaultParams();
+var st = Galaxy.createState(NMAX);
+var rngDrag = Galaxy.RNG(999);
+
+var ui = {
+	n: 4000, speed: 0.1, tilt: 20 * Math.PI / 180,
+	bar: true, spiral: true, stream: true, drag: false, diff: false,
+	trails: false, rings: true, rot: true, corot: false, paused: false,
+	eta: 0.05, sig: 0.1
+};
+
+var view = document.getElementById('view'), ctx = view.getContext('2d');
+var rotC = document.getElementById('rot'), rctx = rotC.getContext('2d');
+var hud = document.getElementById('hud'), settleDiv = document.getElementById('settle');
+var plotDiv = document.getElementById('plot');
+var W = 800, H = 600, CX = 400, CY = 300, SC = 60;
+
+var sprites = [];
+var trIdx = new Int32Array(NTR);
+var trX = new Float32Array(NTR * TRN), trY = new Float32Array(NTR * TRN), trZ = new Float32Array(NTR * TRN);
+var trHead = new Int32Array(NTR), trFill = new Int32Array(NTR);
+var ej0 = new Float64Array(NEJ), ejMax = 0;
+var rings = null, ringDefs = [];
+
+function refreshRings() {
+	rings = Galaxy.resonances(P);
+	ringDefs = [
+		[rings.bar.ilr, '#ff6b6b', 'bILR', null],
+		[rings.bar.cr, '#51f08a', 'bCR', null],
+		[rings.bar.olr, '#6bb8ff', 'bOLR', null],
+		[rings.spiral.ilr, '#ff6b6b', 'sILR', [4, 3]],
+		[rings.spiral.cr, '#51f08a', 'sCR', [4, 3]],
+		[rings.spiral.olr, '#6bb8ff', 'sOLR', [4, 3]]
+	];
+}
+var settleLeft = 0;
+var fpsEMA = 60, simMs = 0, frame = 0;
+var binV = new Float64Array(12), binC = new Float64Array(12);
+
+function $(id) { return document.getElementById(id); }
+
+function makeSprites() {
+	var c, g, cv, cx2;
+	for (c = 0; c < 5; c++) {
+		cv = document.createElement('canvas');
+		cv.width = 16; cv.height = 16;
+		cx2 = cv.getContext('2d');
+		g = cx2.createRadialGradient(8, 8, 0, 8, 8, 8);
+		g.addColorStop(0, '#ffffff');
+		g.addColorStop(0.25, COL[c]);
+		g.addColorStop(1, 'rgba(0,0,0,0)');
+		cx2.fillStyle = g;
+		cx2.fillRect(0, 0, 16, 16);
+		sprites.push(cv);
+	}
+}
+
+function makeLegend() {
+	var el = $('legend'), h = '', c;
+	for (c = 0; c < 5; c++)
+		h += '<div><span style="background:' + COL[c] + '"></span>' + CLS[c] + '</div>';
+	h += '<div><span style="background:transparent;border:1px solid #4f4"> </span>bar-captured tracer</div>';
+	el.innerHTML = h;
+}
+
+function resize() {
+	var dpr = window.devicePixelRatio || 1;
+	var r = view.getBoundingClientRect();
+	W = Math.max(50, r.width); H = Math.max(50, r.height);
+	view.width = Math.round(W * dpr); view.height = Math.round(H * dpr);
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	CX = W / 2; CY = H / 2;
+	SC = (Math.min(W, H) / 2 - 24) / 6.5;
+}
+window.addEventListener('resize', resize);
+
+function pickTracers() {
+	var want = [
+		[0, 0.8, 1.5], [0, 2.0, 3.0], [0, 1.2, 2.0], [1, 1.0, 2.5],
+		[2, 0, 9], [3, 2.0, 9], [4, 0, 99], [1, 2.5, 9]
+	];
+	var t, i, best, bestD, R, d, mid;
+	for (t = 0; t < NTR; t++) {
+		best = (t * 977) % NMAX; bestD = 1e9;
+		mid = (want[t][1] + want[t][2]) / 2;
+		for (i = 0; i < NMAX; i += 7) {
+			if (st.cls[i] !== want[t][0]) continue;
+			R = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i]);
+			if (R < want[t][1] || R > want[t][2]) continue;
+			d = Math.abs(R - mid);
+			if (d < bestD) { bestD = d; best = i; }
+		}
+		trIdx[t] = best;
+		trHead[t] = 0; trFill[t] = 0;
+	}
+}
+
+function snapEJ() {
+	var om = ejOm(), o = ejOpts(), i;
+	ejMax = 0;
+	if (om === null) return;
+	for (i = 0; i < NEJ; i++)
+		ej0[i] = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, om, o);
+}
+
+function ejOm() {
+	if (ui.bar && !ui.spiral) return P.bar.om;
+	if (ui.spiral && !ui.bar) return P.spiral.om;
+	return null;
+}
+
+function ejOpts() {
+	return { bar: ui.bar, spiral: ui.spiral, ramp: 1 };
+}
+
+function updateEJ() {
+	var om = ejOm(), o, i, w;
+	if (om === null) return;
+	o = ejOpts();
+	w = 0;
+	for (i = 0; i < NEJ; i++) {
+		var e = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, om, o);
+		var d = Math.abs(e - ej0[i]) / Math.max(Math.abs(ej0[i]), 0.3);
+		if (d > w) w = d;
+	}
+	if (w > ejMax) ejMax = w;
+}
+
+function reset() {
+	Galaxy.initStars(st, P, P.seed);
+	st.n = NMAX;
+	settleLeft = Math.round(P.tsettle / P.dtSettle);
+	settleDiv.hidden = false;
+}
+
+function finishSettle() {
+	st.n = ui.n;
+	pickTracers();
+	snapEJ();
+	settleDiv.hidden = true;
+}
+
+function advance() {
+	var steps = Math.max(1, Math.round(ui.speed / DT)), k;
+	var t0 = performance.now();
+	for (k = 0; k < steps; k++) Galaxy.step(st, P, DT, ui.bar, ui.spiral);
+	if (ui.drag) {
+		var s = ui.diff ? ui.sig : 0;
+		Galaxy.applyDrag(st, ui.speed, ui.eta, s, rngDrag);
+	}
+	simMs = performance.now() - t0;
+	pushTracers();
+}
+
+function pushTracers() {
+	var t, i, h;
+	for (t = 0; t < NTR; t++) {
+		i = trIdx[t]; h = trHead[t];
+		trX[t * TRN + h] = st.x[i];
+		trY[t * TRN + h] = st.y[i];
+		trZ[t * TRN + h] = st.z[i];
+		trHead[t] = (h + 1) % TRN;
+		if (trFill[t] < TRN) trFill[t]++;
+	}
+}
+
+function project(x, y, z, cb, sb, ct, st_, out) {
+	var xr = x * cb + y * sb, yr = -x * sb + y * cb;
+	out[0] = CX + SC * xr;
+	out[1] = CY + SC * (yr * ct - z * st_);
+	return out;
+}
+
+var ptmp = [0, 0];
+
+function render() {
+	var i, sx, sy, az, dep, size, spr;
+	var ct = Math.cos(ui.tilt), st_ = Math.sin(ui.tilt);
+	var cb = 1, sb = 0;
+	if (ui.corot) {
+		var a = P.bar.om * st.t;
+		cb = Math.cos(a); sb = Math.sin(a);
+	}
+	if (ui.trails) {
+		ctx.globalCompositeOperation = 'source-over';
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = 'rgba(4,4,10,0.28)';
+		ctx.fillRect(0, 0, W, H);
+	} else {
+		ctx.globalCompositeOperation = 'source-over';
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = '#04040a';
+		ctx.fillRect(0, 0, W, H);
+	}
+	if (ui.rings) drawRings(ct);
+	ctx.globalCompositeOperation = 'lighter';
+	var n = st.n, x = st.x, y = st.y, z = st.z, cls = st.cls;
+	var showStream = ui.stream;
+	for (i = 0; i < n; i++) {
+		var c = cls[i];
+		if (c === 4 && !showStream) continue;
+		var xr = x[i] * cb + y[i] * sb, yr = -x[i] * sb + y[i] * cb;
+		az = z[i] < 0 ? -z[i] : z[i];
+		dep = 1 - 0.25 * Math.min(az / 3, 1);
+		sx = CX + SC * xr;
+		sy = CY + SC * (yr * ct - z[i] * st_);
+		if (sx < -8 || sx > W + 8 || sy < -8 || sy > H + 8) continue;
+		size = 7 * (0.7 + 0.3 * dep);
+		ctx.globalAlpha = dep;
+		spr = sprites[c];
+		ctx.drawImage(spr, sx - size / 2, sy - size / 2, size, size);
+	}
+	ctx.globalAlpha = 1;
+	ctx.globalCompositeOperation = 'source-over';
+	drawTracers(cb, sb, ct, st_);
+	if (ui.rot && frame % 10 === 0) drawRot();
+}
+
+function drawRings(ct) {
+	var d, k, r;
+	ctx.lineWidth = 1;
+	ctx.font = '10px monospace';
+	for (d = 0; d < ringDefs.length; d++) {
+		ctx.strokeStyle = ringDefs[d][1];
+		ctx.fillStyle = ringDefs[d][1];
+		ctx.setLineDash(ringDefs[d][3] || []);
+		for (k = 0; k < ringDefs[d][0].length; k++) {
+			r = ringDefs[d][0][k];
+			if (r > 6.5) continue;
+			ctx.beginPath();
+			ctx.ellipse(CX, CY, r * SC, Math.max(1, r * SC * ct), 0, 0, 6.2832);
+			ctx.stroke();
+			ctx.fillText(ringDefs[d][2], CX + r * SC * 0.71, CY - r * SC * ct * 0.71 - 3);
+		}
+	}
+	ctx.setLineDash([]);
+}
+
+function drawTracers(cb, sb, ct, st_) {
+	var t, j, idx, px, py;
+	ctx.lineWidth = 1.2;
+	for (t = 0; t < NTR; t++) {
+		if (trFill[t] < 2) continue;
+		ctx.strokeStyle = t === 6 ? '#54f6ff' : '#ffffff';
+		ctx.globalAlpha = 0.75;
+		ctx.beginPath();
+		for (j = 0; j < trFill[t]; j++) {
+			idx = (trHead[t] - trFill[t] + j + TRN * 2) % TRN;
+			project(trX[t * TRN + idx], trY[t * TRN + idx], trZ[t * TRN + idx], cb, sb, ct, st_, ptmp);
+			px = ptmp[0]; py = ptmp[1];
+			if (j === 0) ctx.moveTo(px, py);
+			else ctx.lineTo(px, py);
+		}
+		ctx.stroke();
+	}
+	ctx.globalAlpha = 1;
+	var ba = P.bar.om * st.t, cbb = Math.cos(ba), sbb = Math.sin(ba);
+	for (t = 0; t < NTR; t++) {
+		if (trFill[t] < 2) continue;
+		var i = trIdx[t];
+		project(st.x[i], st.y[i], st.z[i], cb, sb, ct, st_, ptmp);
+		px = ptmp[0]; py = ptmp[1];
+		var R = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i]);
+		var xb = st.x[i] * cbb + st.y[i] * sbb, yb = -st.x[i] * sbb + st.y[i] * cbb;
+		var captured = Math.abs(xb) > 1.5 * Math.abs(yb) && R < 1.8;
+		ctx.strokeStyle = captured ? '#51f08a' : '#ffd54a';
+		ctx.beginPath();
+		ctx.arc(px, py, captured ? 6 : 4, 0, 6.2832);
+		ctx.stroke();
+		ctx.fillStyle = '#fff';
+		ctx.font = '10px monospace';
+		ctx.fillText(String(t), px + 7, py - 5);
+	}
+}
+
+function drawRot() {
+	var w = rotC.width, h = rotC.height, b, i, R, v;
+	for (b = 0; b < 12; b++) { binV[b] = 0; binC[b] = 0; }
+	for (i = 0; i < st.n; i++) {
+		R = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i]);
+		if (R < 0.05 || R > 6) continue;
+		b = Math.min(11, Math.floor(R / 6 * 12));
+		binV[b] += (st.x[i] * st.vy[i] - st.y[i] * st.vx[i]) / R;
+		binC[b]++;
+	}
+	rctx.globalCompositeOperation = 'source-over';
+	rctx.globalAlpha = 1;
+	rctx.fillStyle = '#060614';
+	rctx.fillRect(0, 0, w, h);
+	function X(r) { return 24 + r / 6 * (w - 30); }
+	function Y(v) { return h - 14 - v / 1.5 * (h - 22); }
+	rctx.strokeStyle = '#3a3e5c';
+	rctx.lineWidth = 1;
+	rctx.beginPath();
+	rctx.moveTo(24, 6); rctx.lineTo(24, h - 14); rctx.lineTo(w - 6, h - 14);
+	rctx.stroke();
+	rctx.strokeStyle = '#51f08a';
+	rctx.setLineDash([3, 3]);
+	rctx.beginPath();
+	rctx.moveTo(X(0), Y(0)); rctx.lineTo(X(1.5 / P.bar.om > 6 ? 6 : 1.5 / P.bar.om), Y(Math.min(1.5, P.bar.om * 6)));
+	rctx.stroke();
+	rctx.strokeStyle = '#54c6f0';
+	rctx.beginPath();
+	rctx.moveTo(X(0), Y(0)); rctx.lineTo(X(1.5 / P.spiral.om > 6 ? 6 : 1.5 / P.spiral.om), Y(Math.min(1.5, P.spiral.om * 6)));
+	rctx.stroke();
+	rctx.setLineDash([]);
+	rctx.strokeStyle = '#ffffff';
+	rctx.beginPath();
+	for (i = 0; i <= 60; i++) {
+		R = i / 60 * 6;
+		v = Galaxy.vc(R, P);
+		if (i === 0) rctx.moveTo(X(R), Y(v));
+		else rctx.lineTo(X(R), Y(v));
+	}
+	rctx.stroke();
+	rctx.fillStyle = '#ffb066';
+	for (b = 0; b < 12; b++) {
+		if (binC[b] < 5) continue;
+		R = (b + 0.5) / 12 * 6;
+		v = binV[b] / binC[b];
+		rctx.fillRect(X(R) - 2, Y(v) - 2, 4, 4);
+	}
+	rctx.fillStyle = '#8f93b0';
+	rctx.font = '9px monospace';
+	rctx.fillText('vc(R)', 28, 14);
+	rctx.fillText('6', w - 12, h - 4);
+}
+
+function fmtEJ() {
+	if (ejOm() === null) return 'n/a';
+	return ejMax.toExponential(1);
+}
+
+function updateHUD() {
+	var rot = st.t / 6.2831853;
+	hud.textContent = 'N ' + st.n + '  ' + fpsEMA.toFixed(0) + 'fps sim ' + simMs.toFixed(1) +
+		'ms  t ' + rot.toFixed(1) + ' rot  EJ ' + fmtEJ() + '  caps ' + st.caps;
+}
+
+function loop(now) {
+	requestAnimationFrame(loop);
+	var dtms = now - (loop.last || now);
+	loop.last = now;
+	if (dtms > 0 && dtms < 250) fpsEMA += (1000 / dtms - fpsEMA) * 0.05;
+	if (settleLeft > 0) {
+		var m = Math.min(25, settleLeft);
+		Galaxy.settle(st, P, m, P.dtSettle, ui.bar, ui.spiral);
+		settleLeft -= m;
+		settleDiv.textContent = 'settling… ' +
+			Math.round(100 * (1 - settleLeft / (P.tsettle / P.dtSettle))) + '%';
+		if (settleLeft <= 0) finishSettle();
+		render();
+		updateHUD();
+		return;
+	}
+	if (!ui.paused) {
+		advance();
+		if (frame % 30 === 0) updateEJ();
+	}
+	frame++;
+	render();
+	if (frame % 10 === 0) updateHUD();
+}
+
+function bindSlider(id, fn) {
+	var el = $(id), out = $('o-' + id.slice(2));
+	function upd() { out.textContent = fn(parseFloat(el.value)); }
+	el.addEventListener('input', upd);
+	upd();
+}
+
+var checkAfter = {};
+
+function bindCheck(id, key, after) {
+	var el = $(id);
+	el.checked = ui[key];
+	if (after) checkAfter[id] = after;
+	el.addEventListener('change', function() {
+		ui[key] = el.checked;
+		if (after) after();
+	});
+}
+
+function init() {
+	makeSprites();
+	makeLegend();
+	resize();
+	bindSlider('s-speed', function(v) { ui.speed = v; return v.toFixed(2); });
+	bindSlider('s-tilt', function(v) { ui.tilt = v * Math.PI / 180; return v.toFixed(0) + '°'; });
+	bindSlider('s-ab', function(v) { P.bar.ab = v; return v.toFixed(3); });
+	bindSlider('s-as', function(v) { P.spiral.as = v; return v.toFixed(3); });
+	bindSlider('s-ob', function(v) { P.bar.om = v; refreshRings(); return v.toFixed(2); });
+	bindSlider('s-os', function(v) { P.spiral.om = v; refreshRings(); return v.toFixed(2); });
+	bindSlider('s-eta', function(v) { ui.eta = v; return v.toFixed(3); });
+	bindSlider('s-sig', function(v) { ui.sig = v; return v.toFixed(2); });
+	bindCheck('c-bar', 'bar', snapEJ);
+	bindCheck('c-spiral', 'spiral', snapEJ);
+	bindCheck('c-stream', 'stream');
+	bindCheck('c-drag', 'drag');
+	bindCheck('c-diff', 'diff');
+	bindCheck('c-trails', 'trails');
+	bindCheck('c-rings', 'rings');
+	bindCheck('c-rot', 'rot', function() { plotDiv.style.display = ui.rot ? '' : 'none'; });
+	bindCheck('c-corot', 'corot');
+	var nb = $('nbtns').querySelectorAll('button');
+	nb.forEach(function(btn) {
+		btn.addEventListener('click', function() {
+			nb.forEach(function(o) { o.classList.remove('on'); });
+			btn.classList.add('on');
+			ui.n = parseInt(btn.dataset.n, 10);
+			if (settleLeft <= 0) st.n = ui.n;
+		});
+	});
+	$('b-pause').addEventListener('click', togglePause);
+	$('b-step').addEventListener('click', function() {
+		if (settleLeft > 0 || !ui.paused) return;
+		advance();
+		frame++;
+		render();
+		updateHUD();
+	});
+	$('b-reset').addEventListener('click', reset);
+	window.addEventListener('keydown', onKey);
+	refreshRings();
+	reset();
+	requestAnimationFrame(loop);
+}
+
+function togglePause() {
+	ui.paused = !ui.paused;
+	$('b-pause').textContent = ui.paused ? 'resume' : 'pause';
+	$('b-pause').classList.toggle('on', ui.paused);
+}
+
+function setCheck(id, key) {
+	ui[key] = !ui[key];
+	$(id).checked = ui[key];
+	if (checkAfter[id]) checkAfter[id]();
+}
+
+function onKey(e) {
+	if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) e.target.blur();
+	var k = e.key;
+	if (k === ' ') { e.preventDefault(); togglePause(); }
+	else if (k === 's' || k === 'S') $('b-step').click();
+	else if (k === 'r' || k === 'R') reset();
+	else if (k === 'c' || k === 'C') setCheck('c-corot', 'corot');
+	else if (k === '1') setCheck('c-stream', 'stream');
+	else if (k === '2') setCheck('c-trails', 'trails');
+	else if (k === '3') setCheck('c-rings', 'rings');
+	else if (k === '4') setCheck('c-rot', 'rot');
+	else if (k === '5') setCheck('c-drag', 'drag');
+}
+
+init();
+})();
+</script>
+</body>
+</html>
