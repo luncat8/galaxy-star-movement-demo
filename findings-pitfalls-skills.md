@@ -128,3 +128,52 @@ integrator, not the luck of the random draw.
 Two `edit_file` calls to one file in a single block race: one edit's content is
 silently lost and stray duplicated lines (`rts) module.exports…`) can appear.
 Same-file edits must be sequential; parallel calls are only safe across files.
+
+## 16. Steady test-particle arms live ILR→CR only; map (R,psi) to see it
+
+(R,psi) density maps (psi = azimuth in spiral-potential frame) diagnose arm
+zones unambiguously: vertical ridges = arms tracking the wave, horizontal
+bands = rings, scatter = disorganized. Found: strong inner response, a
+horseshoe gap at CR (width ~sqrt(Phi_a/Omega), cold stars avoid CR itself —
+a real dynamical gap, not a bug), and NO organized response CR→OLR at any
+tested amplitude (0.02–0.06): small De + strong forcing = nonlinear
+overdrive. Lower amplitude weakens inner arms without organizing the outer
+disk, so envelope tapers can't fix it. Consequence: put the clean zone where
+it shows (pattern speed sets ILR/CR/OLR together) and gate arms in
+phase-coherent narrow annuli (bar→spiral phase twist near R~1.5 at Om=0.36
+splits the zone; measure inside one side).
+
+## 17. Rejected: peculiar-velocity cooling (AM pump) and Lin-Shu ICs (no-op)
+
+- A Langevin thermostat on peculiar velocities pins arms perfectly (amp
+  0.65, contrast 3.5, sigmaR pinned) — but vp→vc(R_now) sampled on
+  epicycle orbits pumps angular momentum: median Lz drifts x0.85–1.27/200tu
+  with direction flipping by eta. Uncooled control migrates x~1.0, proving
+  the drift is cooler artifact. Never balance physical torque against a
+  tuned artifact; gate median Lz, not just median R.
+- Lin-Shu forced-epicycle ICs (full X/Y derivation, regularized at CR/OLR)
+  changed nothing (fade 0.59 vs 0.60): the settle transient is separatrix
+  capture during ramp, not initial-condition mismatch. Slower ramp (20→40)
+  also identical. Only colder starts + trapping statistics move the needle.
+- Bonus: removing the bar makes spiral fade WORSE (0.56 vs 0.71) — the
+  bar-driven spiral organizes, not just perturbs. Don't "decouple" by
+  deletion.
+
+## 18. Pattern-speed moves ILR into the bar: check twist-vs-R, not just mean
+
+Om 0.40→0.33 widened the arm zone but dragged ILR to 0.83 and twisted the
+1.0–1.25 bar response 29° (strong component → mean misalignment 23°, gate
+fail). Bar-frame m=2 phase-vs-R in 0.25 slices names the culprit slice;
+Om=0.36 (ILR 0.72, CR 2.57, OLR 4.03) is x1-clean over 1.0–2.3 with the gap
+pushed outward. Rule: any Om change re-validates BOTH the arm zone and the
+bar twist profile; keep the bar aperture above the ILR.
+
+## 19. Headless PNG renders without a browser (node+zlib, ~40 lines)
+
+No canvas in the sandbox: replicate the page sprite loop (class colors,
+alpha/size, tilt projection, additive accumulation into Float32 RGB) and
+encode PNG via zlib.deflateSync + hand-rolled IHDR/IDAT/IEND with CRC32.
+Soft-clip tone map (v/(v+k)) for the core. Good enough to judge arm/bar/
+ring morphology and background dilution at settle vs T=150. Deterministic
+same-seed physics ⇒ renders are comparable across parameter changes; fix
+the bar phase (or note Om*T) when comparing snapshots.

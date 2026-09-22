@@ -11,9 +11,9 @@ for (k = 0; k < steps; k++) Galaxy.step(st, P, dt, true, false);
 /* m=2 response in the bar frame: captured x1 stars align with the bar angle. */
 var barAng = P.bar.om * st.t, re = 0, im = 0, cnt = 0, i;
 for (i = 0; i < N; i++) {
-	if (st.cls[i] > 1) continue;
+	if (st.cls[i] !== 0 && st.cls[i] !== 1 && st.cls[i] !== 5) continue;
 	var R = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i]);
-	if (R < 0.6 || R > 1.9) continue;
+	if (R < 0.9 || R > 1.9) continue;
 	var ph = Math.atan2(st.y[i], st.x[i]) - barAng;
 	re += Math.cos(2 * ph); im += Math.sin(2 * ph); cnt++;
 }

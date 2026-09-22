@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Galactic Orbits — Stellar Mechanics Without Gravity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050208;
+    --fg: #f5f0ff;
+    --muted: #8a7da5;
+    --muted-dim: #5a4d75;
+    --accent: #ff7ba8;
+    --accent2: #6bd5ff;
+    --accent3: #ffd870;
+    --glass: rgba(20, 10, 35, 0.55);
+    --border: rgba(255, 255, 255, 0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  body.dragging { cursor: grabbing; }
+  #sky {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+  }
+  .hud { position: fixed; pointer-events: none; z-index: 10; }
+  .hud > * { pointer-events: auto; }
+  .hud-top-left { top: 22px; left: 22px; max-width: 330px; }
+  .hud-top-right { top: 22px; right: 22px; text-align: right; }
+  .hud-bottom {
+    bottom: 22px; left: 50%; transform: translateX(-50%);
+    text-align: center; color: var(--muted-dim);
+    font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .panel {
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(120%);
+    -webkit-backdrop-filter: blur(20px) saturate(120%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.6);
+  }
+  .title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 26px;
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #fff 0%, #ffd870 35%, #ff7ba8 65%, #6bd5ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 9px; color: var(--muted);
+    letter-spacing: 0.22em; text-transform: uppercase;
+    margin-bottom: 16px; line-height: 1.4;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 16px;
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.04);
+  }
+  .stat-label { color: var(--muted); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; }
+  .stat-value { color: var(--fg); font-weight: 500; font-feature-settings: 'tnum'; }
+  .controls { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .control-row { display: flex; flex-direction: column; gap: 6px; }
+  .control-label {
+    font-size: 9px; color: var(--muted);
+    letter-spacing: 0.18em; text-transform: uppercase;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .control-value { color: var(--fg); font-weight: 500; }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px; outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    background: linear-gradient(135deg, #ff7ba8, #ffd870);
+    border-radius: 50%; cursor: pointer;
+    box-shadow: 0 0 12px rgba(255, 123, 168, 0.5);
+    border: none;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px;
+    background: linear-gradient(135deg, #ff7ba8, #ffd870);
+    border-radius: 50%; cursor: pointer; border: none;
+  }
+  .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .toggle {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    transition: all 0.2s ease;
+    color: var(--muted);
+  }
+  .toggle:hover { background: rgba(255,255,255,0.05); color: var(--fg); }
+  .toggle.active {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.2);
+    color: var(--fg);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0; transition: box-shadow 0.2s;
+  }
+  .toggle.active .dot { box-shadow: 0 0 10px currentColor; }
+  .dot.disk { background: #b4c8ff; color: #b4c8ff; }
+  .dot.bar { background: #ffd870; color: #ffd870; }
+  .dot.belt { background: #ff7ba8; color: #ff7ba8; }
+  .dot.bulge { background: #ff8a48; color: #ff8a48; }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    flex: 1;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 8px 8px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.06); color: var(--fg); }
+  .btn.active {
+    background: rgba(107, 213, 255, 0.12);
+    border-color: rgba(107, 213, 255, 0.4);
+    color: var(--accent2);
+    box-shadow: 0 0 16px rgba(107, 213, 255, 0.2);
+  }
+  .legend {
+    display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(120%);
+    -webkit-backdrop-filter: blur(20px) saturate(120%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .legend-item .ldot { width: 6px; height: 6px; border-radius: 50%; }
+  .legend-item .count {
+    color: var(--fg); font-weight: 500;
+    min-width: 60px; text-align: right;
+    font-feature-settings: 'tnum';
+  }
+  .legend-item.disk .ldot { background: #b4c8ff; box-shadow: 0 0 8px #b4c8ff; }
+  .legend-item.bar .ldot { background: #ffd870; box-shadow: 0 0 8px #ffd870; }
+  .legend-item.belt .ldot { background: #ff7ba8; box-shadow: 0 0 8px #ff7ba8; }
+  .legend-item.bulge .ldot { background: #ff8a48; box-shadow: 0 0 8px #ff8a48; }
+  @media (max-width: 720px) {
+    .hud-top-left { max-width: calc(100% - 24px); top: 12px; left: 12px; }
+    .hud-top-right { top: auto; bottom: 12px; right: 12px; }
+    .title { font-size: 20px; }
+    .hud-bottom { display: none; }
+    .panel { padding: 14px 16px; }
+    .stats { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="sky"></canvas>
+  
+  <div class="hud hud-top-left">
+    <div class="panel">
+      <div class="title">Galactic Orbits</div>
+      <div class="subtitle">Stars on individual paths · No gravity computed</div>
+      
+      <div class="stats">
+        <div class="stat"><span class="stat-label">Stars</span><span class="stat-value" id="stat-stars">—</span></div>
+        <div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="stat-fps">—</span></div>
+        <div class="stat"><span class="stat-label">Sim Time</span><span class="stat-value" id="stat-time">0 Myr</span></div>
+        <div class="stat"><span class="stat-label">Bar Angle</span><span class="stat-value" id="stat-bar">0°</span></div>
+      </div>
+      
+      <div class="controls">
+        <div class="control-row">
+          <div class="control-label">
+            <span>Time Flow</span>
+            <span class="control-value" id="speed-val">1.00×</span>
+          </div>
+          <input type="range" id="speed" min="0" max="500" value="100">
+        </div>
+        
+        <div class="control-row">
+          <div class="control-label"><span>Components</span></div>
+          <div class="toggles">
+            <div class="toggle active" data-toggle="0"><div class="dot disk"></div>Disk</div>
+            <div class="toggle active" data-toggle="1"><div class="dot bar"></div>Bar</div>
+            <div class="toggle active" data-toggle="2"><div class="dot belt"></div>Belt</div>
+            <div class="toggle active" data-toggle="3"><div class="dot bulge"></div>Bulge</div>
+          </div>
+        </div>
+        
+        <div class="control-row">
+          <div class="control-label"><span>Visualize</span></div>
+          <div class="btn-row">
+            <button class="btn" id="btn-orbits">Orbit Paths</button>
+            <button class="btn" id="btn-trails">Trails</button>
+            <button class="btn" id="btn-reset">Reset View</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="hud hud-top-right">
+    <div class="legend">
+      <div class="legend-item disk"><span>Disk</span><span class="count" id="cnt-disk">—</span></div>
+      <div class="legend-item bar"><span>Bar</span><span class="count" id="cnt-bar">—</span></div>
+      <div class="legend-item belt"><span>Belt</span><span class="count" id="cnt-belt">—</span></div>
+      <div class="legend-item bulge"><span>Bulge</span><span class="count" id="cnt-bulge">—</span></div>
+    </div>
+  </div>
+  
+  <div class="hud hud-bottom">
+    Drag to rotate · Scroll to zoom · Each star follows its own orbital path
+  </div>
+  
+  <script>
+  'use strict';
+
+  const canvas = document.getElementById('sky');
+  const ctx = canvas.getContext('2d');
+
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ======== STAR COUNTS ========
+  const N_DISK  = 18000;
+  const N_BAR   = 5000;
+  const N_BELT  = 3500;
+  const N_BULGE = 7000;
+  const N_TOTAL = N_DISK + N_BAR + N_BELT + N_BULGE;
+
+  const OFF_DISK  = 0;
+  const OFF_BAR   = N_DISK;
+  const OFF_BELT  = N_DISK + N_BAR;
+  const OFF_BULGE = N_DISK + N_BAR + N_BELT;
+
+  const TYPE_RANGES = [
+    [OFF_DISK,  OFF_DISK  + N_DISK],
+    [OFF_BAR,   OFF_BAR   + N_BAR],
+    [OFF_BELT,  OFF_BELT  + N_BELT],
+    [OFF_BULGE, OFF_BULGE + N_BULGE],
+  ];
+
+  // Pattern speeds (the only "rigid" thing — the bar pattern speed)
+  const OMEGA_BAR = 0.40;   // bar pattern rotation rate
+  const V_CIRC = 1.4;       // disk circular velocity (flat rotation curve)
+
+  // Component colors
+  const TYPE_COLORS = [
+    [180, 210, 255],   // disk: cool blue-white (young stars)
+    [255, 220, 130],   // bar: warm gold (older stars)
+    [255, 130, 175],   // belt: pink (HII regions / star formation)
+    [255, 145,  75],   // bulge: amber (old red stars)
+  ];
+
+  // ======== PER-STAR ARRAYS ========
+  const aSemi     = new Float32Array(N_TOTAL);
+  const bSemi     = new Float32Array(N_TOTAL); // bar: semi-minor; disk: eccentricity
+  const theta0    = new Float32Array(N_TOTAL);
+  const omega     = new Float32Array(N_TOTAL);
+  const phiEpi    = new Float32Array(N_TOTAL); // argument of periapsis (disk)
+  const incl      = new Float32Array(N_TOTAL); // inclination (bulge)
+  const omegaNode = new Float32Array(N_TOTAL); // longitude of node (bulge)
+  const zAmp      = new Float32Array(N_TOTAL);
+  const zPhase    = new Float32Array(N_TOTAL);
+  const omegaZ    = new Float32Array(N_TOTAL);
+  const starSize  = new Float32Array(N_TOTAL);
+  const bright    = new Float32Array(N_TOTAL);
+
+  const posX = new Float32Array(N_TOTAL);
+  const posY = new Float32Array(N_TOTAL);
+  const posZ = new Float32Array(N_TOTAL);
+
+  // Pre-rendered glowing sprites for each component
+  const sprites = TYPE_COLORS.map(c => {
+    const s = document.createElement('canvas');
+    s.width = s.height = 64;
+    const sctx = s.getContext('2d');
+    const g = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, `rgba(${c[0]},${c[1]},${c[2]},1)`);
+    g.addColorStop(0.2, `rgba(${c[0]},${c[1]},${c[2]},0.6)`);
+    g.addColorStop(0.5, `rgba(${c[0]},${c[1]},${c[2]},0.15)`);
+    g.addColorStop(1, `rgba(${c[0]},${c[1]},${c[2]},0)`);
+    sctx.fillStyle = g;
+    sctx.fillRect(0, 0, 64, 64);
+    return s;
+  });
+
+  // ======== INITIALIZE STAR ORBITS ========
+  // Each star gets a fixed orbit. Time only advances the phase.
+  function init() {
+    // --- DISK: exponential profile, slight ellipses, flat rotation curve ---
+    for (let i = OFF_DISK; i < OFF_DISK + N_DISK; i++) {
+      const u = Math.random();
+      let r = 0.7 + (-1.7 * Math.log(1 - u * 0.97));
+      r = Math.min(r, 7.0);
+      const ecc = 0.05 + 0.07 * Math.random();  // slight eccentricity
+      aSemi[i] = r;
+      bSemi[i] = ecc;
+      theta0[i] = Math.random() * Math.PI * 2;
+      omega[i] = V_CIRC / Math.max(0.5, r);     // flat rotation curve: ω = v/r
+      phiEpi[i] = Math.random() * Math.PI * 2;  // random orbit orientation
+      zAmp[i] = 0.03 + 0.10 * Math.exp(-r * 0.4) * Math.random();
+      zPhase[i] = Math.random() * Math.PI * 2;
+      omegaZ[i] = omega[i] * (1.0 + 0.3 * Math.random());
+      starSize[i] = 0.6 + 0.7 * Math.random();
+      bright[i] = 0.35 + 0.65 * Math.random() * Math.random();
+    }
+    
+    // --- BAR: aligned ellipses (the magic of bar formation) ---
+    for (let i = OFF_BAR; i < OFF_BAR + N_BAR; i++) {
+      const u = Math.random();
+      const aLen = 0.5 + 2.0 * Math.pow(u, 0.65);
+      const ratio = 0.25 + 0.20 * Math.random();  // b/a ratio (bar elongation)
+      aSemi[i] = aLen;
+      bSemi[i] = aLen * ratio;
+      theta0[i] = Math.random() * Math.PI * 2;
+      omega[i] = 1.0 / Math.pow(Math.max(0.5, aLen), 0.85);
+      phiEpi[i] = 0;
+      zAmp[i] = 0.02 + 0.04 * Math.random();
+      zPhase[i] = Math.random() * Math.PI * 2;
+      omegaZ[i] = omega[i];
+      starSize[i] = 0.8 + 0.6 * Math.random();
+      bright[i] = 0.5 + 0.5 * Math.random();
+    }
+    
+    // --- BELT: narrow Gaussian ring at r ≈ 3.7 ---
+    for (let i = OFF_BELT; i < OFF_BELT + N_BELT; i++) {
+      const ringR = 3.7;
+      const g = (Math.random() + Math.random() + Math.random() - 1.5) * 0.16;
+      const r = ringR + g;
+      aSemi[i] = r;
+      bSemi[i] = 0;
+      theta0[i] = Math.random() * Math.PI * 2;
+      omega[i] = V_CIRC / r;
+      phiEpi[i] = 0;
+      zAmp[i] = 0.02 + 0.03 * Math.random();
+      zPhase[i] = Math.random() * Math.PI * 2;
+      omegaZ[i] = omega[i];
+      starSize[i] = 0.9 + 0.6 * Math.random();
+      bright[i] = 0.55 + 0.45 * Math.random();
+    }
+    
+    // --- BULGE: 3D isotropic orbits in random inclined planes ---
+    for (let i = OFF_BULGE; i < OFF_BULGE + N_BULGE; i++) {
+      const u = Math.random();
+      const r = 0.1 + 0.95 * Math.pow(u, 0.5);
+      aSemi[i] = r;
+      bSemi[i] = 0;
+      theta0[i] = Math.random() * Math.PI * 2;
+      omega[i] = 1.6 / Math.max(0.2, r);
+      incl[i] = Math.acos(2 * Math.random() - 1);  // isotropic inclination
+      omegaNode[i] = Math.random() * Math.PI * 2;
+      starSize[i] = 0.7 + 0.5 * Math.random();
+      bright[i] = 0.5 + 0.5 * Math.random();
+    }
+  }
+  init();
+
+  // ======== STATE ========
+  let t = 0;
+  let speed = 1.0;
+  let showOrbits = false;
+  let showTrails = false;
+  const visible = [true, true, true, true];
+
+  let camYaw = 0.4;
+  let camPitch = 0.9; // slightly top-down
+  let camZoom = 1.0;
+  let tYaw = camYaw, tPitch = camPitch, tZoom = camZoom;
+  
+  let isDragging = false;
+  let lastX = 0, lastY = 0;
+
+  // Randomly select a few stars to draw orbit paths for
+  const orbitStars = [];
+  for(let i=0; i<25; i++) orbitStars.push(Math.floor(Math.random()*N_TOTAL));
+
+  // ======== UPDATE POSITIONS ========
+  function updatePositions() {
+    const sin = Math.sin, cos = Math.cos;
+    const PA = OMEGA_BAR * t;
+    const cpa = cos(PA), spa = sin(PA);
+    
+    // Disk
+    for (let i = OFF_DISK; i < OFF_DISK + N_DISK; i++) {
+      const th = theta0[i] + omega[i] * t;
+      const e = bSemi[i];
+      const r = aSemi[i] * (1 - e*e) / (1 + e * cos(th - phiEpi[i]));
+      posX[i] = r * cos(th);
+      posY[i] = r * sin(th);
+      posZ[i] = zAmp[i] * sin(omegaZ[i] * t + zPhase[i]);
+    }
+    
+    // Bar (aligned ellipses rotated by pattern speed)
+    for (let i = OFF_BAR; i < OFF_BAR + N_BAR; i++) {
+      const th = theta0[i] + omega[i] * t;
+      const x0 = aSemi[i] * cos(th);
+      const y0 = bSemi[i] * sin(th);
+      posX[i] = x0 * cpa - y0 * spa;
+      posY[i] = x0 * spa + y0 * cpa;
+      posZ[i] = zAmp[i] * sin(omegaZ[i] * t + zPhase[i]);
+    }
+    
+    // Belt
+    for (let i = OFF_BELT; i < OFF_BELT + N_BELT; i++) {
+      const th = theta0[i] + omega[i] * t;
+      posX[i] = aSemi[i] * cos(th);
+      posY[i] = aSemi[i] * sin(th);
+      posZ[i] = zAmp[i] * sin(omegaZ[i] * t + zPhase[i]);
+    }
+    
+    // Bulge (3D isotropic orbits)
+    for (let i = OFF_BULGE; i < OFF_BULGE + N_BULGE; i++) {
+      const th = theta0[i] + omega[i] * t;
+      const r = aSemi[i];
+      const x0 = r * cos(th);
+      const y0 = r * sin(th);
+      const cO = cos(omegaNode[i]), sO = sin(omegaNode[i]);
+      const x1 = x0 * cO - y0 * sO;
+      const y1 = x0 * sO + y0 * cO;
+      const cI = cos(incl[i]), sI = sin(incl[i]);
+      posX[i] = x1;
+      posY[i] = y1 * cI;
+      posZ[i] = y1 * sI;
+    }
+  }
+
+  // Helper to project 3D point to 2D screen
+  const camDist = 10;
+  function project(x, y, z, scale, cxS, cyS, cy, sy, cp, sp) {
+    const x1 = x * cy - y * sy;
+    const y1 = x * sy + y * cy;
+    const z1 = z;
+    const x2 = x1;
+    const y2 = y1 * cp - z1 * sp;
+    const z2 = y1 * sp + z1 * cp;
+    const proj = camDist / (camDist + z2);
+    return { 
+      sx: cxS + x2 * scale * proj, 
+      sy: cyS + y2 * scale * proj, 
+      scale: proj 
+    };
+  }
+
+  // ======== RENDER ========
+  function render() {
+    const cy = Math.cos(camYaw), sy = Math.sin(camYaw);
+    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+    const cxS = W / 2, cyS = H / 2;
+    const scale = Math.min(W, H) / 14 * camZoom;
+    
+    if (showTrails) {
+      ctx.fillStyle = 'rgba(5, 2, 8, 0.15)';
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      // Deep space gradient background
+      const grad = ctx.createRadialGradient(cxS, cyS, 0, cxS, cyS, Math.max(W, H));
+      grad.addColorStop(0, '#0a0512');
+      grad.addColorStop(0.4, '#050208');
+      grad.addColorStop(1, '#020108');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    }
+    
+    // Draw core glow
+    const coreGrad = ctx.createRadialGradient(cxS, cyS, 0, cxS, cyS, 150 * camZoom);
+    coreGrad.addColorStop(0, 'rgba(255, 220, 150, 0.4)');
+    coreGrad.addColorStop(0.3, 'rgba(255, 150, 100, 0.1)');
+    coreGrad.addColorStop(1, 'rgba(255, 100, 50, 0)');
+    ctx.fillStyle = coreGrad;
+    ctx.fillRect(0, 0, W, H);
+    
+    // Draw orbit paths if enabled
+    if (showOrbits) {
+      ctx.lineWidth = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      orbitStars.forEach(idx => {
+        const type = idx < OFF_BAR ? 0 : idx < OFF_BELT ? 1 : idx < OFF_BULGE ? 2 : 3;
+        if (!visible[type]) return;
+        const c = TYPE_COLORS[type];
+        ctx.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},0.35)`;
+        ctx.beginPath();
+        const steps = 80;
+        let prevValid = false;
+        for (let j = 0; j <= steps; j++) {
+          const tt = (j / steps) * (2 * Math.PI / omega[idx]);
+          let x, y, z;
+          
+          if (type === 0) { // Disk
+            const th = theta0[idx] + omega[idx] * tt;
+            const e = bSemi[idx];
+            const r = aSemi[idx] * (1 - e*e) / (1 + e * Math.cos(th - phiEpi[idx]));
+            x = r * Math.cos(th);
+            y = r * Math.sin(th);
+            z = zAmp[idx] * Math.sin(omegaZ[idx] * tt + zPhase[idx]);
+          } else if (type === 1) { // Bar
+            const PA = OMEGA_BAR * tt;
+            const th = theta0[idx] + omega[idx] * tt;
+            const x0 = aSemi[idx] * Math.cos(th);
+            const y0 = bSemi[idx] * Math.sin(th);
+            x = x0 * Math.cos(PA) - y0 * Math.sin(PA);
+            y = x0 * Math.sin(PA) + y0 * Math.cos(PA);
+            z = zAmp[idx] * Math.sin(omegaZ[idx] * tt + zPhase[idx]);
+          } else if (type === 2) { // Belt
+            const th = theta0[idx] + omega[idx] * tt;
+            x = aSemi[idx] * Math.cos(th);
+            y = aSemi[idx] * Math.sin(th);
+            z = zAmp[idx] * Math.sin(omegaZ[idx] * tt + zPhase[idx]);
+          } else { // Bulge
+            const th = theta0[idx] + omega[idx] * tt;
+            const r = aSemi[idx];
+            const x0 = r * Math.cos(th);
+            const y0 = r * Math.sin(th);
+            const cO = Math.cos(omegaNode[idx]), sO = Math.sin(omegaNode[idx]);
+            const x1 = x0 * cO - y0 * sO;
+            const y1 = x0 * sO + y0 * cO;
+            const cI = Math.cos(incl[idx]), sI = Math.sin(incl[idx]);
+            x = x1;
+            y = y1 * cI;
+            z = y1 * sI;
+          }
+          
+          const p = project(x, y, z, scale, cxS, cyS, cy, sy, cp, sp);
+          if (j === 0) ctx.moveTo(p.sx, p.sy);
+          else ctx.lineTo(p.sx, p.sy);
+        }
+        ctx.stroke();
+      });
+    }
+
+    // Draw stars with additive blending
+    ctx.globalCompositeOperation = 'lighter';
+    for (let type = 0; type < 4; type++) {
+      if (!visible[type]) continue;
+      const [r0, r1] = TYPE_RANGES[type];
+      const spr = sprites[type];
+      for (let i = r0; i < r1; i++) {
+        const p = project(posX[i], posY[i], posZ[i], scale, cxS, cyS, cy, sy, cp, sp);
+        if (p.sx < -20 || p.sx > W + 20 || p.sy < -20 || p.sy > H + 20) continue;
+        
+        const drawSize = starSize[i] * p.scale * 4.5 * camZoom;
+        ctx.globalAlpha = bright[i] * (0.4 + p.scale * 0.6);
+        ctx.drawImage(spr, p.sx - drawSize / 2, p.sy - drawSize / 2, drawSize, drawSize);
+      }
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ======== INTERACTION ========
+  canvas.addEventListener('pointerdown', (e) => {
+    isDragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    document.body.classList.add('dragging');
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    tYaw -= dx * 0.005;
+    tPitch -= dy * 0.005;
+    tPitch = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, tPitch));
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    isDragging = false;
+    document.body.classList.remove('dragging');
+    canvas.releasePointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    tZoom *= e.deltaY > 0 ? 0.92 : 1.08;
+    tZoom = Math.max(0.3, Math.min(3.5, tZoom));
+  }, { passive: false });
+
+  // ======== UI HOOKUPS ========
+  const speedSlider = document.getElementById('speed');
+  const speedVal = document.getElementById('speed-val');
+  speedSlider.addEventListener('input', () => {
+    speed = parseInt(speedSlider.value) / 100;
+    speedVal.textContent = speed.toFixed(2) + '×';
+  });
+
+  document.querySelectorAll('.toggle').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.toggle);
+      visible[idx] = !visible[idx];
+      el.classList.toggle('active', visible[idx]);
+    });
+  });
+
+  const btnOrbits = document.getElementById('btn-orbits');
+  btnOrbits.addEventListener('click', () => {
+    showOrbits = !showOrbits;
+    btnOrbits.classList.toggle('active', showOrbits);
+  });
+  const btnTrails = document.getElementById('btn-trails');
+  btnTrails.addEventListener('click', () => {
+    showTrails = !showTrails;
+    btnTrails.classList.toggle('active', showTrails);
+  });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    tYaw = 0.4;
+    tPitch = 0.9;
+    tZoom = 1.0;
+  });
+
+  // Populate initial stats
+  document.getElementById('stat-stars').textContent = N_TOTAL.toLocaleString();
+  document.getElementById('cnt-disk').textContent = N_DISK.toLocaleString();
+  document.getElementById('cnt-bar').textContent = N_BAR.toLocaleString();
+  document.getElementById('cnt-belt').textContent = N_BELT.toLocaleString();
+  document.getElementById('cnt-bulge').textContent = N_BULGE.toLocaleString();
+
+  // ======== MAIN LOOP ========
+  let lastTime = performance.now();
+  let fps = 0, frames = 0, fpsTime = 0;
+
+  function loop(now) {
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+    
+    // Smooth camera interpolation
+    camYaw += (tYaw - camYaw) * 0.1;
+    camPitch += (tPitch - camPitch) * 0.1;
+    camZoom += (tZoom - camZoom) * 0.1;
+    
+    t += dt * speed * 0.5; // Scale down dt for smoother time progression
+    
+    updatePositions();
+    render();
+    
+    // FPS counter
+    frames++;
+    fpsTime += dt;
+    if (fpsTime >= 0.5) {
+      fps = Math.round(frames / fpsTime);
+      frames = 0;
+      fpsTime = 0;
+      document.getElementById('stat-fps').textContent = fps;
+      document.getElementById('stat-time').textContent = Math.floor(t * 10) + ' Myr';
+      const barDeg = ((OMEGA_BAR * t * 180 / Math.PI) % 360).toFixed(0);
+      document.getElementById('stat-bar').textContent = barDeg + '°';
+    }
+    
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

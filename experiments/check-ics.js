@@ -5,7 +5,7 @@ var N = 2000;
 var st = Galaxy.createState(N);
 st.n = N;
 Galaxy.initStars(st, P, P.seed);
-var cnt = [0, 0, 0, 0, 0], ret = [0, 0, 0, 0, 0], i;
+var cnt = [0, 0, 0, 0, 0, 0], ret = [0, 0, 0, 0, 0, 0], i;
 var sx = 0, sy = 0, sz = 0, sn = 0, rmax = 0, vmax = 0;
 for (i = 0; i < N; i++) {
 	var c = st.cls[i];
@@ -19,12 +19,12 @@ for (i = 0; i < N; i++) {
 	if (v > vmax) vmax = v;
 	if (c === 4) { sx += st.x[i]; sy += st.y[i]; sz += st.z[i]; sn++; }
 }
-var want = [0.55, 0.25, 0.10, 0.08, 0.02];
-for (i = 0; i < 5; i++) {
+var want = [0.30, 0.25, 0.10, 0.08, 0.02, 0.25];
+for (i = 0; i < 6; i++) {
 	var f = cnt[i] / N;
 	console.log('cls' + i + ': share=' + (100 * f).toFixed(1) + '% retro=' + (100 * ret[i] / cnt[i]).toFixed(2) + '%');
 	if (Math.abs(f - want[i]) > 0.01) L.fail('cls' + i + ' share ' + f.toFixed(3));
-	var cap = i < 2 || i === 4 ? 0.005 : 0.01;
+	var cap = i < 2 || i > 3 ? 0.005 : 0.01;
 	if (ret[i] / cnt[i] > cap) L.fail('cls' + i + ' retrograde ' + (100 * ret[i] / cnt[i]).toFixed(1) + '%');
 }
 sx /= sn; sy /= sn; sz /= sn;

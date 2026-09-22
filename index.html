@@ -70,9 +70,9 @@
 		</div>
 		<h2>Field</h2>
 		<div class="row"><label>bar Ab</label><input id="s-ab" type="range" min="0" max="0.15" step="0.005" value="0.06"><output id="o-ab"></output></div>
-		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.035"><output id="o-as"></output></div>
-		<div class="row"><label>bar Ωb</label><input id="s-ob" type="range" min="0.2" max="0.6" step="0.01" value="0.4"><output id="o-ob"></output></div>
-		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.5" step="0.01" value="0.40"><output id="o-os"></output></div>
+		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.04"><output id="o-as"></output></div>
+		<div class="row"><label>bar Ωb</label><input id="s-ob" type="range" min="0.2" max="0.6" step="0.01" value="0.36"><output id="o-ob"></output></div>
+		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.5" step="0.01" value="0.36"><output id="o-os"></output></div>
 		<h2>Friction (teaching)</h2>
 		<div class="row"><label>drag η</label><input id="s-eta" type="range" min="0" max="0.1" step="0.005" value="0.05"><output id="o-eta"></output></div>
 		<div class="row"><label>diffus σ</label><input id="s-sig" type="range" min="0" max="0.2" step="0.01" value="0.1"><output id="o-sig"></output></div>
@@ -100,7 +100,9 @@
 			forces and no friction.</p>
 			<p>The spiral arms are not material — they are the rotating crests of the field
 			where stars bunch up as they pass, so the pattern never winds up while each star
-			streams through it. The bar works the same way: inside corotation its field
+			streams through it. The cold young disk (blue) responds most sharply, tracing crisp
+			arms like the star-forming ridges of real galaxies, while the warmer old disk stays
+			smooth underneath. The bar works the same way: inside corotation its field
 			captures stars onto elongated resonant (x1) orbits, feeding the bar; at resonances
 			stars trade angular momentum with the pattern and migrate — outward into rings, or
 			onto eccentric inclined orbits that puff into the halo belt. That is how disk turns
@@ -110,7 +112,8 @@
 			toggle shows the opposite: pure friction piles stars into the center — why friction
 			is the wrong tool here.)</p>
 			<p>Keys: <kbd>space</kbd> pause <kbd>s</kbd> step <kbd>r</kbd> reset
-			<kbd>c</kbd> corot <kbd>1..5</kbd> stream/trails/rings/rotcurve/drag.</p>
+			<kbd>c</kbd> corot <kbd>1..5</kbd> stream/trails/rings/rotcurve/drag.
+			Drag to rotate/tilt, wheel to zoom, double-click resets the view.</p>
 		</details>
 	</div>
 </div>
@@ -119,15 +122,17 @@
 (function() {
 'use strict';
 var NMAX = 10000, DT = 0.01, NTR = 8, TRN = 256, NEJ = 128;
-var CLS = ['thin disk', 'thick disk', 'bulge', 'halo belt', 'stream'];
-var COL = ['#fff4e0', '#ffcf9e', '#ff9a66', '#cfe4ff', '#54f6ff'];
+var CLS = ['thin disk', 'thick disk', 'bulge', 'halo belt', 'stream', 'young disk'];
+var COL = ['#fff4e0', '#ffcf9e', '#ff9a66', '#8fa8d8', '#54f6ff', '#7fb8ff'];
+var CLS_A = [0.9, 0.5, 0.45, 0.3, 1.0, 1.0];
+var CLS_S = [7, 6, 6, 5, 7, 8];
 
 var P = Galaxy.defaultParams();
 var st = Galaxy.createState(NMAX);
 var rngDrag = Galaxy.RNG(999);
 
 var ui = {
-	n: 4000, speed: 0.1, tilt: 20 * Math.PI / 180,
+	n: 4000, speed: 0.1, tilt: 20 * Math.PI / 180, yaw: 0, zoom: 1,
 	bar: true, spiral: true, stream: true, drag: false, diff: false,
 	trails: false, rings: true, rot: true, corot: false, paused: false,
 	eta: 0.05, sig: 0.1
@@ -137,7 +142,7 @@ var view = document.getElementById('view'), ctx = view.getContext('2d');
 var rotC = document.getElementById('rot'), rctx = rotC.getContext('2d');
 var hud = document.getElementById('hud'), settleDiv = document.getElementById('settle');
 var plotDiv = document.getElementById('plot');
-var W = 800, H = 600, CX = 400, CY = 300, SC = 60;
+var W = 800, H = 600, CX = 400, CY = 300, SC = 60, SCZ = 60, bgGrad = null;
 
 var sprites = [];
 var trIdx = new Int32Array(NTR);
@@ -165,7 +170,7 @@ function $(id) { return document.getElementById(id); }
 
 function makeSprites() {
 	var c, g, cv, cx2;
-	for (c = 0; c < 5; c++) {
+	for (c = 0; c < 6; c++) {
 		cv = document.createElement('canvas');
 		cv.width = 16; cv.height = 16;
 		cx2 = cv.getContext('2d');
@@ -181,7 +186,7 @@ function makeSprites() {
 
 function makeLegend() {
 	var el = $('legend'), h = '', c;
-	for (c = 0; c < 5; c++)
+	for (c = 0; c < 6; c++)
 		h += '<div><span style="background:' + COL[c] + '"></span>' + CLS[c] + '</div>';
 	h += '<div><span style="background:transparent;border:1px solid #4f4"> </span>bar-captured tracer</div>';
 	el.innerHTML = h;
@@ -195,13 +200,50 @@ function resize() {
 	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 	CX = W / 2; CY = H / 2;
 	SC = (Math.min(W, H) / 2 - 24) / 6.5;
+	bgGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, Math.max(W, H) / 2);
+	bgGrad.addColorStop(0, '#0a0614');
+	bgGrad.addColorStop(0.45, '#04040a');
+	bgGrad.addColorStop(1, '#010102');
 }
 window.addEventListener('resize', resize);
 
+function setTilt(deg) {
+	deg = Math.max(0, Math.min(60, deg));
+	ui.tilt = deg * Math.PI / 180;
+	var el = $('s-tilt');
+	if (el) { el.value = String(Math.round(deg)); $('o-tilt').textContent = Math.round(deg) + '°'; }
+}
+
+function bindCamera() {
+	var drag = false, lx = 0, ly = 0;
+	view.style.touchAction = 'none';
+	view.addEventListener('pointerdown', function(e) {
+		drag = true; lx = e.clientX; ly = e.clientY;
+		view.setPointerCapture(e.pointerId);
+	});
+	view.addEventListener('pointermove', function(e) {
+		if (!drag) return;
+		ui.yaw -= (e.clientX - lx) * 0.005;
+		setTilt(ui.tilt * 180 / Math.PI - (e.clientY - ly) * 0.15);
+		lx = e.clientX; ly = e.clientY;
+	});
+	view.addEventListener('pointerup', function(e) {
+		drag = false;
+		view.releasePointerCapture(e.pointerId);
+	});
+	view.addEventListener('wheel', function(e) {
+		e.preventDefault();
+		ui.zoom = Math.max(0.4, Math.min(3, ui.zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
+	}, { passive: false });
+	view.addEventListener('dblclick', function() {
+		ui.yaw = 0; ui.zoom = 1; setTilt(20);
+	});
+}
+
 function pickTracers() {
 	var want = [
-		[0, 0.8, 1.5], [0, 2.0, 3.0], [0, 1.2, 2.0], [1, 1.0, 2.5],
-		[2, 0, 9], [3, 2.0, 9], [4, 0, 99], [1, 2.5, 9]
+		[0, 0.8, 1.5], [5, 2.0, 3.0], [0, 1.2, 2.0], [1, 1.0, 2.5],
+		[2, 0, 9], [3, 2.0, 9], [4, 0, 99], [5, 2.5, 3.5]
 	];
 	var t, i, best, bestD, R, d, mid;
 	for (t = 0; t < NTR; t++) {
@@ -291,8 +333,8 @@ function pushTracers() {
 
 function project(x, y, z, cb, sb, ct, st_, out) {
 	var xr = x * cb + y * sb, yr = -x * sb + y * cb;
-	out[0] = CX + SC * xr;
-	out[1] = CY + SC * (yr * ct - z * st_);
+	out[0] = CX + SCZ * xr;
+	out[1] = CY + SCZ * (yr * ct - z * st_);
 	return out;
 }
 
@@ -301,11 +343,9 @@ var ptmp = [0, 0];
 function render() {
 	var i, sx, sy, az, dep, size, spr;
 	var ct = Math.cos(ui.tilt), st_ = Math.sin(ui.tilt);
-	var cb = 1, sb = 0;
-	if (ui.corot) {
-		var a = P.bar.om * st.t;
-		cb = Math.cos(a); sb = Math.sin(a);
-	}
+	var a = ui.yaw + (ui.corot ? P.bar.om * st.t : 0);
+	var cb = Math.cos(a), sb = Math.sin(a);
+	SCZ = SC * ui.zoom;
 	if (ui.trails) {
 		ctx.globalCompositeOperation = 'source-over';
 		ctx.globalAlpha = 1;
@@ -314,7 +354,13 @@ function render() {
 	} else {
 		ctx.globalCompositeOperation = 'source-over';
 		ctx.globalAlpha = 1;
-		ctx.fillStyle = '#04040a';
+		ctx.fillStyle = bgGrad;
+		ctx.fillRect(0, 0, W, H);
+		var cg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 150 * ui.zoom);
+		cg.addColorStop(0, 'rgba(255,220,150,0.30)');
+		cg.addColorStop(0.3, 'rgba(255,150,100,0.08)');
+		cg.addColorStop(1, 'rgba(255,100,50,0)');
+		ctx.fillStyle = cg;
 		ctx.fillRect(0, 0, W, H);
 	}
 	if (ui.rings) drawRings(ct);
@@ -327,11 +373,11 @@ function render() {
 		var xr = x[i] * cb + y[i] * sb, yr = -x[i] * sb + y[i] * cb;
 		az = z[i] < 0 ? -z[i] : z[i];
 		dep = 1 - 0.25 * Math.min(az / 3, 1);
-		sx = CX + SC * xr;
-		sy = CY + SC * (yr * ct - z[i] * st_);
+		sx = CX + SCZ * xr;
+		sy = CY + SCZ * (yr * ct - z[i] * st_);
 		if (sx < -8 || sx > W + 8 || sy < -8 || sy > H + 8) continue;
-		size = 7 * (0.7 + 0.3 * dep);
-		ctx.globalAlpha = dep;
+		size = CLS_S[c] * (0.7 + 0.3 * dep);
+		ctx.globalAlpha = dep * CLS_A[c];
 		spr = sprites[c];
 		ctx.drawImage(spr, sx - size / 2, sy - size / 2, size, size);
 	}
@@ -353,9 +399,9 @@ function drawRings(ct) {
 			r = ringDefs[d][0][k];
 			if (r > 6.5) continue;
 			ctx.beginPath();
-			ctx.ellipse(CX, CY, r * SC, Math.max(1, r * SC * ct), 0, 0, 6.2832);
+			ctx.ellipse(CX, CY, r * SCZ, Math.max(1, r * SCZ * ct), 0, 0, 6.2832);
 			ctx.stroke();
-			ctx.fillText(ringDefs[d][2], CX + r * SC * 0.71 + ringDefs[d][4], CY - r * SC * ct * 0.71 - 3);
+			ctx.fillText(ringDefs[d][2], CX + r * SCZ * 0.71 + ringDefs[d][4], CY - r * SCZ * ct * 0.71 - 3);
 		}
 	}
 	ctx.setLineDash([]);
@@ -366,7 +412,7 @@ function drawTracers(cb, sb, ct, st_) {
 	ctx.lineWidth = 1.2;
 	for (t = 0; t < NTR; t++) {
 		if (trFill[t] < 2) continue;
-		ctx.strokeStyle = t === 6 ? '#54f6ff' : '#ffffff';
+		ctx.strokeStyle = t === 6 ? '#54f6ff' : (t === 1 || t === 7) ? '#7fb8ff' : '#ffffff';
 		ctx.globalAlpha = 0.75;
 		ctx.beginPath();
 		for (j = 0; j < trFill[t]; j++) {
@@ -510,6 +556,7 @@ function init() {
 	makeSprites();
 	makeLegend();
 	resize();
+	bindCamera();
 	bindSlider('s-speed', function(v) { ui.speed = v; return v.toFixed(2); });
 	bindSlider('s-tilt', function(v) { ui.tilt = v * Math.PI / 180; return v.toFixed(0) + '°'; });
 	bindSlider('s-ab', function(v) { P.bar.ab = v; return v.toFixed(3); });
@@ -532,10 +579,10 @@ function init() {
 		btn.addEventListener('click', function() {
 			nb.forEach(function(o) { o.classList.remove('on'); });
 			btn.classList.add('on');
-			ui.n = parseInt(btn.dataset.n, 10);
-			if (settleLeft <= 0) st.n = ui.n;
-		});
+	ui.n = parseInt(btn.dataset.n, 10);
+		if (settleLeft <= 0) st.n = ui.n;
 	});
+});
 	$('b-pause').addEventListener('click', togglePause);
 	$('b-step').addEventListener('click', function() {
 		if (settleLeft > 0 || !ui.paused) return;

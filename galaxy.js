@@ -12,8 +12,8 @@ function defaultParams() {
 		thick: { md: 0.30, a: 1.00, b: 0.30 },
 		bulge: { mb: 0.20, s: 0.20 },
 		halo: { vh2: 0.536, rc: 0.50 },
-		bar: { ab: 0.060, rb: 1.20, hb: 0.30, om: 0.40 },
-		spiral: { as: 0.035, rp: 2.80, sig: 0.50, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.40 },
+		bar: { ab: 0.060, rb: 1.20, hb: 0.30, om: 0.36 },
+		spiral: { as: 0.040, rp: 2.80, sig: 0.50, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.36 },
 		rmin: 0.02,
 		vmax: 3.0,
 		tramp: 20,
@@ -398,9 +398,11 @@ function sampleDisk(tab, u) {
 }
 
 /* Class for slot i: interleaved so every prefix is a representative mix. */
+/* 0 thin 30%, 5 young 25%, 1 thick 25%, 2 bulge 10%, 3 halo 8%, 4 stream 2%. */
 function classFor(i) {
 	var m = i % 100;
-	if (m < 55) return 0;
+	if (m < 30) return 0;
+	if (m < 55) return 5;
 	if (m < 80) return 1;
 	if (m < 90) return 2;
 	if (m < 98) return 3;
@@ -428,15 +430,15 @@ function initStars(st, P, seed) {
 	for (i = 0; i < nmax; i++) {
 		var c = classFor(i), R, phi, vR, vp, zz, vvz, cf, sf;
 		st.cls[i] = c;
-		if (c === 0 || c === 1) {
-			var thick = c === 1;
+		if (c === 0 || c === 1 || c === 5) {
+			var thick = c === 1, young = c === 5;
 			R = sampleDisk(thick ? tabThick : tabThin, rng.next());
 			phi = 6.283185307179586 * rng.next();
 			cf = Math.cos(phi); sf = Math.sin(phi);
-			vp = vc(R, P) + (thick ? 0.20 : 0.14) * rng.gauss();
-			vR = (thick ? 0.15 : 0.12) * rng.gauss();
-			zz = (thick ? 0.15 * R : 0.06) * rng.gauss();
-			vvz = (thick ? 0.12 : 0.07) * rng.gauss();
+			vp = vc(R, P) + (thick ? 0.20 : young ? 0.05 : 0.14) * rng.gauss();
+			vR = (thick ? 0.15 : young ? 0.05 : 0.12) * rng.gauss();
+			zz = (thick ? 0.15 * R : young ? 0.02 : 0.06) * rng.gauss();
+			vvz = (thick ? 0.12 : young ? 0.025 : 0.07) * rng.gauss();
 			st.x[i] = R * cf; st.y[i] = R * sf; st.z[i] = zz;
 			st.vx[i] = vR * cf - vp * sf;
 			st.vy[i] = vR * sf + vp * cf;
