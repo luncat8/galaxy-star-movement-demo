@@ -6,6 +6,7 @@ var L = require('./lib.js'), Galaxy = L.Galaxy;
  * heating (must be ~nil) from pattern-driven heating (allowed, bounded). */
 function run(barOn, spirOn) {
 	var P = Galaxy.defaultParams();
+P.align = 0;
 	var N = 4000, dt = 0.01, T = 100;
 	var st = Galaxy.createState(N);
 	st.n = N;

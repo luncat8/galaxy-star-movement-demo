@@ -3,6 +3,7 @@
 'use strict';
 var Galaxy = require('../galaxy.js');
 var P = Galaxy.defaultParams();
+P.align = 0;
 var N = 10000, dt = 0.01;
 var st = Galaxy.createState(N);
 st.n = N;

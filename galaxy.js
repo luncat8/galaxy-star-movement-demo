@@ -20,34 +20,37 @@ function defaultParams() {
 		tramp: 20,
 		tsettle: 30,
 		dtSettle: 0.02,
-		seed: 1234567
+		seed: 1234567,
+		align: 1,
+		alignPeak: 0.14,
+		alignRin: 0.8,
+		alignRpeak: 2.4,
+		alignRtau: 2.2
 	};
 }
 
-function spiralP(P) {
-	return 1 / Math.tan(P.spiral.pitch);
+/* S2 kinematic-aligned epicycle amplitude e(R). Zero inside R_in (bar/ILR zone
+ * already organized by forcing); rises linearly to e_peak at R_peak (mid-forced
+ * zone); exponential taper beyond. Thick-disk/class multiplier applied by caller. */
+function alignEcc(R, P) {
+	var Rin = P.alignRin, Rp = P.alignRpeak, Rt = P.alignRtau, ep = P.alignPeak;
+	if (R <= Rin) return 0;
+	if (R <= Rp) return ep * (R - Rin) / (Rp - Rin);
+	return ep * Math.exp(-(R - Rp) / Rt);
 }
 
-/* Spiral phase factor L(R) = g(R)*ln(R/r1) with a C1 smoothstep freeze of the
- * winding across r1±w. A hard freeze would kink the force at r1 and inject
- * O(dt) leapfrog errors on every crossing; the smooth version keeps EJ tight.
- * Writes [L, dL/dR] into out. */
+/* Spiral L(R) = g(R)*ln(R/r1) with C1 smoothstep freeze across r1±w. */
 function spiralLD(R, P, out) {
 	var r1 = P.spiral.r1, w = 0.3, lo = r1 - w, hi = r1 + w;
-	if (R <= lo) {
-		out[0] = 0; out[1] = 0;
-		return out;
-	}
-	if (R >= hi) {
-		out[0] = Math.log(R / r1); out[1] = 1 / R;
-		return out;
-	}
+	if (R <= lo) { out[0] = 0; out[1] = 0; return out; }
+	if (R >= hi) { out[0] = Math.log(R / r1); out[1] = 1 / R; return out; }
 	var x = (R - lo) / (hi - lo), lr = Math.log(R / r1);
 	var g = x * x * (3 - 2 * x), dg = 6 * x * (1 - x) / (hi - lo);
-	out[0] = g * lr;
-	out[1] = dg * lr + g / R;
+	out[0] = g * lr; out[1] = dg * lr + g / R;
 	return out;
 }
+
+function spiralP(P) { return 1 / Math.tan(P.spiral.pitch); }
 
 function createState(nmax) {
 	return {
@@ -71,20 +74,13 @@ function RNG(seed) {
 		s3 = (s3 ^ (s3 >>> 19)) ^ (t ^ (t >>> 8));
 		return s3 >>> 0;
 	}
-	function next() {
-		return nextU32() / 4294967296;
-	}
+	function next() { return nextU32() / 4294967296; }
 	function gauss() {
 		var u, v, r;
-		if (hasSpare) {
-			hasSpare = false;
-			return spare;
-		}
+		if (hasSpare) { hasSpare = false; return spare; }
 		do { u = next(); } while (u <= 1e-12);
-		v = next();
-		r = Math.sqrt(-2 * Math.log(u));
-		spare = r * Math.sin(6.283185307179586 * v);
-		hasSpare = true;
+		v = next(); r = Math.sqrt(-2 * Math.log(u));
+		spare = r * Math.sin(6.283185307179586 * v); hasSpare = true;
 		return r * Math.cos(6.283185307179586 * v);
 	}
 	function reset(seed2) {
@@ -96,17 +92,13 @@ function RNG(seed) {
 	return { next: next, gauss: gauss, reset: reset };
 }
 
-/* Adiabatic pattern ramp: smoothstep over [0, tramp]. */
 function rampFactor(t, P) {
-	var x;
 	if (t <= 0) return 0;
 	if (t >= P.tramp) return 1;
-	x = t / P.tramp;
+	var x = t / P.tramp;
 	return x * x * (3 - 2 * x);
 }
 
-/* Per-mode amplitude gains: multiplicative on top of the global ramp, eased
- * toward on/off over P.fade so mid-run toggles do not jolt the disk. */
 function gainToward(g, target, step) {
 	if (g < target) return Math.min(target, g + step);
 	if (g > target) return Math.max(target, g - step);
@@ -138,11 +130,11 @@ function omega(R, P) {
 	return vc(R, P) / R;
 }
 
-/* Epicycle frequency via numeric derivative of Om^2. */
 function kappa(R, P) {
 	var h = 1e-4 * R + 1e-5;
-	var o2p = omega(R + h, P), o2m = omega(R - h * 0.5 > 1e-4 ? R - h * 0.5 : 1e-4, P);
-	var d = (o2p * o2p - o2m * o2m) / (R + h - (R - h * 0.5 > 1e-4 ? R - h * 0.5 : 1e-4));
+	var Rm = R - h * 0.5; if (Rm < 1e-4) Rm = 1e-4;
+	var o2p = omega(R + h, P), o2m = omega(Rm, P);
+	var d = (o2p * o2p - o2m * o2m) / (R + h - Rm);
 	var k2 = R * d + 4 * omega(R, P) * omega(R, P);
 	if (k2 <= 0) return 0;
 	return Math.sqrt(k2);
@@ -150,7 +142,7 @@ function kappa(R, P) {
 
 var spiralScratch = [0, 0];
 
-/* Full potential (for gradient checks, energy diagnostics). Not the hot path. */
+/* Full potential (diagnostics/energy). Not the hot path. */
 function potential(x, y, z, t, P, o) {
 	var barOn = !o || o.bar !== false, spirOn = !o || o.spiral !== false;
 	var ramp = (o && o.ramp !== undefined) ? o.ramp : rampFactor(t, P);
@@ -193,13 +185,11 @@ function accelSingle(x, y, z, t, P, o, out) {
 	S = Math.sqrt(P.thin.b * P.thin.b + z * z);
 	D2 = R2 + (P.thin.a + S) * (P.thin.a + S); D = Math.sqrt(D2);
 	com = -G * P.thin.md / (D2 * D);
-	ax += com * x; ay += com * y;
-	az += com * (P.thin.a + S) * z / S;
+	ax += com * x; ay += com * y; az += com * (P.thin.a + S) * z / S;
 	S = Math.sqrt(P.thick.b * P.thick.b + z * z);
 	D2 = R2 + (P.thick.a + S) * (P.thick.a + S); D = Math.sqrt(D2);
 	com = -G * P.thick.md / (D2 * D);
-	ax += com * x; ay += com * y;
-	az += com * (P.thick.a + S) * z / S;
+	ax += com * x; ay += com * y; az += com * (P.thick.a + S) * z / S;
 	q = r2 + P.bulge.s * P.bulge.s;
 	c = -G * P.bulge.mb / (q * Math.sqrt(q));
 	ax += c * x; ay += c * y; az += c * z;
@@ -273,13 +263,11 @@ function computeAccel(st, P, t, barOn, spirOn) {
 		S = Math.sqrt(P.thin.b * P.thin.b + zi * zi);
 		D2 = R2 + (P.thin.a + S) * (P.thin.a + S); D = Math.sqrt(D2);
 		com = -G * P.thin.md / (D2 * D);
-		axi = com * xi; ayi = com * yi;
-		azi = com * (P.thin.a + S) * zi / S;
+		axi = com * xi; ayi = com * yi; azi = com * (P.thin.a + S) * zi / S;
 		S = Math.sqrt(P.thick.b * P.thick.b + zi * zi);
 		D2 = R2 + (P.thick.a + S) * (P.thick.a + S); D = Math.sqrt(D2);
 		com = -G * P.thick.md / (D2 * D);
-		axi += com * xi; ayi += com * yi;
-		azi += com * (P.thick.a + S) * zi / S;
+		axi += com * xi; ayi += com * yi; azi += com * (P.thick.a + S) * zi / S;
 		q = r2 + P.bulge.s * P.bulge.s;
 		c = -G * P.bulge.mb / (q * Math.sqrt(q));
 		axi += c * xi; ayi += c * yi; azi += c * zi;
@@ -308,12 +296,10 @@ function computeAccel(st, P, t, barOn, spirOn) {
 				fs = Math.exp(-0.5 * lrp * lrp);
 				dfs = fs * (-lraw / (sig2 * R));
 				Zs = Math.exp(-zi * zi / zs2);
-				if (R <= r1lo) {
-					cs = cs0; ss = ss0; pdL = 0;
-				} else {
-					if (R >= r1hi) {
-						L = lraw + lrp1c; dL = 1 / R;
-					} else {
+				if (R <= r1lo) { cs = cs0; ss = ss0; pdL = 0; }
+				else {
+					if (R >= r1hi) { L = lraw + lrp1c; dL = 1 / R; }
+					else {
 						lx = (R - r1lo) / (r1hi - r1lo); llr = lraw + lrp1c;
 						lg = lx * lx * (3 - 2 * lx);
 						L = lg * llr;
@@ -337,9 +323,6 @@ function computeAccel(st, P, t, barOn, spirOn) {
 	}
 }
 
-/* One leapfrog step with cached acceleration: kick(t0)/drift/kick(t1).
- * Accel arrays must hold a(x, t) on entry; they hold a(x, t+dt) on exit.
- */
 function step(st, P, dt, barOn, spirOn) {
 	var n = st.n, h = dt * 0.5;
 	var x = st.x, y = st.y, z = st.z, vx = st.vx, vy = st.vy, vz = st.vz;
@@ -372,9 +355,7 @@ function applyDrag(st, h, eta, sig, rng) {
 	var s = sig > 0 ? sig * Math.sqrt(h) : 0;
 	if (damp === 1 && s === 0) return;
 	if (s === 0) {
-		for (i = 0; i < n; i++) {
-			vx[i] *= damp; vy[i] *= damp; vz[i] *= damp;
-		}
+		for (i = 0; i < n; i++) { vx[i] *= damp; vy[i] *= damp; vz[i] *= damp; }
 		return;
 	}
 	for (i = 0; i < n; i++) {
@@ -384,7 +365,6 @@ function applyDrag(st, h, eta, sig, rng) {
 	}
 }
 
-/* Numeric inverse-CDF table for an exponential disk (PDF ~ R*exp(-R/h)). */
 function buildDiskTable(h, rlo, rhi, size) {
 	var rs = new Float64Array(size), cdf = new Float64Array(size), i;
 	var acc = 0, prevR = rlo, prevP = rlo * Math.exp(-rlo / h), r, pdf;
@@ -405,14 +385,12 @@ function sampleDisk(tab, u) {
 	if (u >= 1) return rs[hi];
 	while (hi - lo > 1) {
 		mid = (lo + hi) >> 1;
-		if (cdf[mid] < u) lo = mid;
-		else hi = mid;
+		if (cdf[mid] < u) lo = mid; else hi = mid;
 	}
 	var t = (u - cdf[lo]) / (cdf[hi] - cdf[lo] + 1e-12);
 	return rs[lo] + t * (rs[hi] - rs[lo]);
 }
 
-/* Class for slot i: interleaved so every prefix is a representative mix. */
 /* 0 thin 30%, 5 young 25%, 1 thick 25%, 2 bulge 10%, 3 halo 8%, 4 stream 2%. */
 function classFor(i) {
 	var m = i % 100;
@@ -424,9 +402,6 @@ function classFor(i) {
 	return 4;
 }
 
-/* Fold v_phi to prograde: isotropic dispersions put half the stars on retrograde
- * orbits; flipping the sign keeps |v| (hence energy) unchanged while giving the
- * component net rotation like real bulges/haloes. */
 function foldPrograde(st, i) {
 	var x = st.x[i], y = st.y[i], R = Math.sqrt(x * x + y * y);
 	if (R < 1e-6) return;
@@ -434,6 +409,89 @@ function foldPrograde(st, i) {
 	var vp = Math.abs((x * st.vy[i] - y * st.vx[i]) / R);
 	st.vx[i] = vR * x / R - vp * y / R;
 	st.vy[i] = vR * y / R + vp * x / R;
+}
+
+/* S2: nudge disk stars onto epicyclic ellipses whose major axes lie along the
+ * spiral crest phi_spiral(R) at t=0 (same winding law as the potential, pattern
+ * frame). For each thin/young/thick star we apply a small (dR, dvR, dvp)
+ * perturbation: radial shift outward near crests, inward near troughs (so
+ * orbits compress at the apocenter side = arm); matching epicyclic velocity
+ * puts the star on a near-closed ellipse. Random dispersions are preserved.
+ * Inner disk is relocked by forcing during the 30-tu settle; outer disk starts
+ * with full-disk arms that shear over ~20-70 tu (curve-precession.js t_decorr)
+ * — an honest transient unwind, not a render fake. */
+function alignEpicycles(st, P) {
+	if (!P.align) return;
+	var n = st.n, i;
+	var p = spiralP(P), r1 = P.spiral.r1;
+	var r1lo = r1 - 0.3, r1hi = r1 + 0.3;
+	for (i = 0; i < n; i++) {
+		var c = st.cls[i];
+		if (c !== 0 && c !== 1 && c !== 5) continue;
+		var xi = st.x[i], yi = st.y[i];
+		var vxi = st.vx[i], vyi = st.vy[i];
+		var R2 = xi * xi + yi * yi, R = Math.sqrt(R2);
+		if (R < 0.3 || R > 7) continue;
+		/* Crest azimuth phi_spiral(R) at t=0 (inertial frame). */
+		var L, lx, lr, lg;
+		if (R <= r1lo) L = 0;
+		else if (R >= r1hi) L = Math.log(R / r1);
+		else {
+			lx = (R - r1lo) / (r1hi - r1lo); lr = Math.log(R / r1);
+			lg = lx * lx * (3 - 2 * lx); L = lg * lr;
+		}
+		var phiC = p * L;
+		/* Class multiplier: cold young responds most, warm thick least. */
+		var mult = c === 5 ? 1.3 : c === 1 ? 0.4 : 1.0;
+		var e = alignEcc(R, P) * mult;
+		if (e <= 0.003) continue;
+		var a = e * R; /* radial epicycle amplitude */
+		var phi = Math.atan2(yi, xi);
+		/* Nearest of the two m=2 crests: chi in [-pi/2, pi/2]. */
+		var dphi = phi - phiC;
+		dphi = ((dphi + Math.PI) % (2 * Math.PI)) - Math.PI;
+		if (dphi > Math.PI / 2) dphi -= Math.PI;
+		else if (dphi < -Math.PI / 2) dphi += Math.PI;
+		var ca = Math.cos(dphi), sa = Math.sin(dphi);
+		/* Crest-pointing unit vector (points toward nearest arm direction). */
+		var cam = Math.cos(phiC + (Math.abs(phi - phiC) > Math.PI / 2 + 1e-6 ? Math.PI : 0));
+		var sam = Math.sin(phiC + (Math.abs(phi - phiC) > Math.PI / 2 + 1e-6 ? Math.PI : 0));
+		/* Radial shift dR = a*ca: moves star outward if near crest (ca>0), inward
+		 * if near trough (ca<0). Compresses azimuthal spacing on the crest side
+		 * where orbits crowd (apocenter pile-up). Shift along the radial direction
+		 * at the star's current azimuth, NOT along the crest vector, to preserve
+		 * approximate angle and avoid azimuthal translation. */
+		var cf = xi / R, sf = yi / R;
+		var dR = a * ca;
+		var nR = R + dR;
+		if (nR < 0.05) continue;
+		var nx = nR * cf, ny = nR * sf;
+		/* Decompose existing velocity into (vR, vp) polar at old position; preserve
+		 * random component, apply epicyclic velocity at new phase dphi.
+		 * Linear epicycle (BT sec 3.2.3): guiding center at Rg, chi is epicycle
+		 * phase (chi=0 -> apocenter, chi=pi -> pericenter).
+		 *   dR =  -a * cos(chi)         [signed; max + at apocenter]
+		 *   vR =   a * kappa * sin(chi)
+		 *   vp = vc(Rg) - (Gamma1) * ...  tangential epicycle
+		 * where standard closed epicycle in the axisymmetric potential gives
+		 * tangential amplitude b = (2*Omega/kappa)*a, so dvp = -Omega * a * cos(chi)
+		 * at apocenter (conservation of L: Rg*vc = (Rg+a)*vp -> vp ~ vc - Omega*a). */
+		var vR0 = vxi * cf + vyi * sf;
+		var vp0 = -vxi * sf + vyi * cf;
+		var k = kappa(R, P), Om = omega(R, P);
+		/* Epicyclic vR added; existing vR0 already includes random radial dispersion. */
+		var nvR = vR0 + a * k * sa * 0.5;
+		/* Tangential velocity at new radius: conserve the random part of angular
+		 * momentum (vp0*R) so stars don't get a torquing kick, and add the
+		 * epicyclic tangential component at the new apocenter/pericenter phase. */
+		var vpCirc = vc(nR, P);
+		var Lrand = vp0 * R - vc(R, P) * R; /* random angular momentum excess */
+		var dvpEpi = -Om * a * ca; /* cos term: slow at apocenter, fast at pericenter */
+		var nvp = vpCirc + Lrand / nR + dvpEpi;
+		st.x[i] = nx; st.y[i] = ny;
+		st.vx[i] = nvR * (nx / nR) - nvp * (ny / nR);
+		st.vy[i] = nvR * (ny / nR) + nvp * (nx / nR);
+	}
 }
 
 function initStars(st, P, seed) {
@@ -471,7 +529,6 @@ function initStars(st, P, seed) {
 			st.vz[i] = 0.55 * rng.gauss();
 			foldPrograde(st, i);
 		} else if (c === 3) {
-			/* r^-1.5 number profile over [0.8, 7]: near-equilibrium, no post-settle sag. */
 			var uh = rng.next(), ih = uh * (0.3780 - 1.1180) + 1.1180;
 			var rh = 1 / (ih * ih);
 			var zh = 2 * rng.next() - 1, ph2 = 6.283185307179586 * rng.next();
@@ -492,16 +549,15 @@ function initStars(st, P, seed) {
 			st.vz[i] = svz + 0.01 * rng.gauss();
 		}
 	}
-	st.n = nmax;
-	st.t = 0;
-	st.caps = 0;
+	/* S2: seed aligned epicycles BEFORE initial accel computation. */
+	alignEpicycles(st, P);
+	st.n = nmax; st.t = 0; st.caps = 0;
 	computeAccel(st, P, 0, true, true);
 	return rng;
 }
 
 function settle(st, P, steps, dt, barOn, spirOn) {
-	var k;
-	for (k = 0; k < steps; k++) step(st, P, dt, barOn, spirOn);
+	for (var k = 0; k < steps; k++) step(st, P, dt, barOn, spirOn);
 }
 
 function energy1(x, y, z, vx, vy, vz, t, P, o) {
@@ -512,7 +568,13 @@ function jacobi1(x, y, z, vx, vy, vz, t, P, om, o) {
 	return energy1(x, y, z, vx, vy, vz, t, P, o) - om * (x * vy - y * vx);
 }
 
-/* Resonance scan: roots of omfn(R) - Op over [0.2, 6]. */
+function omFn(R, P, om, kind) {
+	var O = omega(R, P);
+	if (kind === 0) return O - om;
+	if (kind === 1) return O - 0.5 * kappa(R, P) - om;
+	return O + 0.5 * kappa(R, P) - om;
+}
+
 function findRoots(P, om, kind) {
 	var out = [], N = 400, lo = 0.2, hi = 6, i;
 	var prevR = lo, prevV = omFn(lo, P, om, kind), R, v, a, b, fa, m, fm, k;
@@ -523,10 +585,8 @@ function findRoots(P, om, kind) {
 		else if (v * prevV < 0) {
 			a = prevR; b = R; fa = prevV;
 			for (k = 0; k < 40; k++) {
-				m = 0.5 * (a + b);
-				fm = omFn(m, P, om, kind);
-				if (fa * fm <= 0) b = m;
-				else { a = m; fa = fm; }
+				m = 0.5 * (a + b); fm = omFn(m, P, om, kind);
+				if (fa * fm <= 0) b = m; else { a = m; fa = fm; }
 			}
 			out.push(0.5 * (a + b));
 		}
@@ -535,25 +595,10 @@ function findRoots(P, om, kind) {
 	return out;
 }
 
-function omFn(R, P, om, kind) {
-	var O = omega(R, P);
-	if (kind === 0) return O - om;
-	if (kind === 1) return O - 0.5 * kappa(R, P) - om;
-	return O + 0.5 * kappa(R, P) - om;
-}
-
 function resonances(P) {
 	return {
-		bar: {
-			ilr: findRoots(P, P.bar.om, 1),
-			cr: findRoots(P, P.bar.om, 0),
-			olr: findRoots(P, P.bar.om, 2)
-		},
-		spiral: {
-			ilr: findRoots(P, P.spiral.om, 1),
-			cr: findRoots(P, P.spiral.om, 0),
-			olr: findRoots(P, P.spiral.om, 2)
-		}
+		bar:  { ilr: findRoots(P, P.bar.om, 1), cr: findRoots(P, P.bar.om, 0), olr: findRoots(P, P.bar.om, 2) },
+		spiral: { ilr: findRoots(P, P.spiral.om, 1), cr: findRoots(P, P.spiral.om, 0), olr: findRoots(P, P.spiral.om, 2) }
 	};
 }
 
@@ -571,6 +616,7 @@ return {
 	resonances: resonances,
 	energy1: energy1, jacobi1: jacobi1,
 	rampFactor: rampFactor, updateModeGains: updateModeGains, spiralP: spiralP,
+	alignEcc: alignEcc, alignEpicycles: alignEpicycles,
 	buildDiskTable: buildDiskTable, sampleDisk: sampleDisk,
 	classFor: classFor,
 	RNG: RNG

@@ -15,6 +15,7 @@ var CLS_S = [7, 6, 6, 5, 7, 8];
 
 var name = process.argv[2] || 'calm';
 var P = Galaxy.defaultParams();
+P.align = 0;
 if (name === 'calm') {
 	P.spiral.om = 0.30; P.spiral.as = 0.06;
 } else if (name !== 'legacy') {

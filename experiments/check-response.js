@@ -1,6 +1,7 @@
 'use strict';
 var L = require('./lib.js'), Galaxy = L.Galaxy;
 var P = Galaxy.defaultParams();
+P.align = 0; /* S2 ICs are cosmetic; physics gates test the potential's own response. */
 var N = 4000, dt = 0.01, T = 150;
 var st = Galaxy.createState(N);
 st.n = N;

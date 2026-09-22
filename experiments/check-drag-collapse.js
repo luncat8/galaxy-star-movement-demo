@@ -7,6 +7,7 @@ function medianR(st, buf) {
 
 function run(eta) {
 	var P = Galaxy.defaultParams();
+P.align = 0;
 	var N = 1000, dt = 0.01, T = 50;
 	var st = Galaxy.createState(N);
 	st.n = N;

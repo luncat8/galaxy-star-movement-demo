@@ -3,6 +3,7 @@
 'use strict';
 var Galaxy = require('../galaxy.js');
 var P = Galaxy.defaultParams();
+P.align = 0;
 
 function fmt(x) { return x.toFixed(3); }
 console.log('R\tvc\tOmega\tkappa\tk/2\tOm-k/2\td(Om-k/2)/dR');

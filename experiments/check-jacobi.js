@@ -3,6 +3,7 @@ var L = require('./lib.js'), Galaxy = L.Galaxy;
 
 function runSingle(name, barOn, spirOn, om) {
 	var P = Galaxy.defaultParams();
+P.align = 0;
 	var N = 1000, dt = 0.01, T = 60;
 	var st = Galaxy.createState(N);
 	st.n = N;
@@ -38,6 +39,7 @@ function cloneState(st) {
  * so gate on shadow convergence dt vs dt/2 — pure truncation error, no physics. */
 function runCombined() {
 	var P = Galaxy.defaultParams();
+P.align = 0;
 	var N = 1000, T = 30;
 	var st0 = Galaxy.createState(N);
 	st0.n = N;
@@ -75,6 +77,7 @@ function runCombined() {
 }
 
 var P0 = Galaxy.defaultParams();
+P.align = 0;
 runSingle('bar-only', true, false, P0.bar.om);
 runSingle('spiral-only', false, true, P0.spiral.om);
 runCombined();

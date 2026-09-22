@@ -1,6 +1,7 @@
 'use strict';
 var L = require('./lib.js'), Galaxy = L.Galaxy;
 var P = Galaxy.defaultParams();
+P.align = 0;
 var Rs = [0.3, 0.8, 1.5, 2.5, 4.0], phis = [0, 0.7, 2.1], zs = [0, 0.4, 1.0];
 var h = 1e-5, t = 3.7, o = { bar: true, spiral: true, ramp: 1 };
 var out = [0, 0, 0], maxRel = 0, maxAbs = 0, worst = '';

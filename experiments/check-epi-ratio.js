@@ -1,6 +1,7 @@
 'use strict';
 var L = require('./lib.js'), Galaxy = L.Galaxy;
 var P = Galaxy.defaultParams();
+P.align = 0;
 var R0 = 1, vR0 = 0.02, T = 120, dt = 0.005, steps = Math.round(T / dt);
 var st = Galaxy.createState(1);
 st.n = 1;

@@ -1,6 +1,7 @@
 'use strict';
 var L = require('./lib.js'), Galaxy = L.Galaxy;
 var P = Galaxy.defaultParams();
+P.align = 0;
 var R, v, worst = 0, worstR = 0;
 for (R = 0.3; R <= 5.001; R += 0.1) {
 	v = Galaxy.vc(R, P);
