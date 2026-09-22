@@ -25,7 +25,8 @@ function defaultParams() {
 		alignPeak: 0.14,
 		alignRin: 0.8,
 		alignRpeak: 2.4,
-		alignRtau: 2.2
+		alignRtau: 2.2,
+		alignYoung: 0
 	};
 }
 
@@ -441,8 +442,11 @@ function alignEpicycles(st, P) {
 			lg = lx * lx * (3 - 2 * lx); L = lg * lr;
 		}
 		var phiC = p * L;
-		/* Class multiplier: cold young responds most, warm thick least. */
-		var mult = c === 5 ? 1.3 : c === 1 ? 0.4 : 1.0;
+		/* Class multiplier: cold young disk is left alone (alignYoung=0) — its own
+		 * linear response already carries arms past R=4 (amp 0.4-0.86); crest-phase
+		 * seeding on top was measured to fight it (young outer amp drops to 0.20).
+		 * Thick disk is warm and barely responsive: 0.4. */
+		var mult = c === 5 ? P.alignYoung : c === 1 ? 0.4 : 1.0;
 		var e = alignEcc(R, P) * mult;
 		if (e <= 0.003) continue;
 		var a = e * R; /* radial epicycle amplitude */

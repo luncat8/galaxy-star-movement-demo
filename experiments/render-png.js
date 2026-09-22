@@ -1,6 +1,10 @@
 /* Headless PNG render of a run, replicating the page render path (sprites,
  * additive blend, tilt projection) including the glow underlay. Node+zlib.
- * Usage: node render-png.js legacy|calm   -> experiments/logs/render-<name>-<t>tu.png */
+ * Usage: node render-png.js calm|align|noalign -> experiments/logs/render-<name>-<t>tu.png
+ *   calm    shipping default preset (spiral-only, P.align as committed)
+ *   align   S2 kinematic-aligned ICs experiment (P.align=1)
+ *   noalign calm with alignment off (P.align=0) - S2 A/B baseline
+ */
 'use strict';
 var zlib = require('zlib'), fs = require('fs'), path = require('path');
 var Galaxy = require('../galaxy.js');
@@ -9,20 +13,20 @@ var L = require('./lib.js');
 var W = 560, H = 560, CX = W / 2, CY = H / 2, SCZ = (Math.min(W, H) / 2 - 24) / 6.5;
 var TILT = 20 * Math.PI / 180;
 var N = 10000, DT = 0.01;
-var COL = [[255, 244, 224], [255, 207, 158], [255, 154, 102], [143, 168, 216], [84, 246, 255], [127, 184, 255]];
+var COL = [[255, 232, 200], [255, 199, 142], [255, 138, 85], [143, 168, 216], [84, 246, 255], [111, 170, 255]];
 var CLS_A = [0.85, 0.32, 0.35, 0.16, 0.9, 1.0];
 var CLS_S = [7, 6, 6, 5, 7, 8];
 
 var name = process.argv[2] || 'calm';
 var P = Galaxy.defaultParams();
-P.align = 0;
-if (name === 'calm') {
-	P.spiral.om = 0.30; P.spiral.as = 0.06;
-} else if (name !== 'legacy') {
-	console.error('variant must be legacy or calm');
+P.spiral.om = 0.30; P.spiral.as = 0.06; P.bar.ab = 0;
+if (name === 'align') P.align = 1;
+else if (name === 'noalign') P.align = 0;
+else if (name !== 'calm') {
+	console.error('variant must be calm, align or noalign');
 	process.exit(1);
 }
-var barOn = name === 'legacy';
+P.bar.g = 0; P.spiral.g = 1;
 
 /* Framebuffer (linear, additive) + z-free planar projection. */
 var fb = new Float32Array(W * H * 3);
@@ -42,16 +46,42 @@ function coreGlow() {
 	for (y = -rad; y <= rad; y++) for (x = -rad; x <= rad; x++) {
 		var d = Math.sqrt(x * x + y * y) / rad;
 		if (d > 1) continue;
-		var a = d < 0.3 ? 0.30 * (1 - d / 0.3 * 0.73) : 0.08 * (1 - d);
-		addPx(CX + x | 0, CY + y | 0, 255 / 255, 190 / 255, 130 / 255, a * 0.55);
+		var a = d < 0.3 ? 0.34 * (1 - d / 0.3 * 0.7) : 0.09 * (1 - d);
+		addPx(CX + x | 0, CY + y | 0, 255 / 255, 200 / 255, 140 / 255, a * 0.6);
 	}
 }
 
 /* Glow underlay: same algorithm as the page (bin in pattern frame -> decay
- * accumulate -> DoG -> soft clip). */
+ * accumulate -> DoG -> soft clip), plus the radial warm-core/blue-rim color
+ * ramp: the DoG excess (arms) tints bluer than the base disk light. */
 var GN = 96, GEXT = 6.8, GSCALE = GN / (2 * GEXT), GLOW_K = 0.8, GLOW_TAU = 2;
 var gRaw = new Float32Array(GN * GN), gScr = new Float32Array(GN * GN);
 var gFine = new Float32Array(GN * GN), gWide = new Float32Array(GN * GN);
+var gAcc = new Float32Array(GN * GN), gVal = new Float32Array(GN * GN);
+var gArmE = new Float32Array(GN * GN), gArmF = new Float32Array(GN * GN);
+var gLutR = new Float32Array(GN * GN), gLutG = new Float32Array(GN * GN), gLutB = new Float32Array(GN * GN);
+var ARM_R = 150, ARM_G = 186, ARM_B = 255, ARM_T = 0.55;
+(function buildGlowLut() {
+	var NEUTRAL = [222, 224, 238], WARM = [255, 224, 178], COOL = [158, 194, 255];
+	function sstep(a, b, x) {
+		var t = (x - a) / (b - a);
+		t = t < 0 ? 0 : t > 1 ? 1 : t;
+		return t * t * (3 - 2 * t);
+	}
+	var gx, gy, i = 0, xp, yp, R, wW, wC;
+	for (gy = 0; gy < GN; gy++) for (gx = 0; gx < GN; gx++, i++) {
+		xp = (gx + 0.5) / GSCALE - GEXT; yp = (gy + 0.5) / GSCALE - GEXT;
+		R = Math.sqrt(xp * xp + yp * yp);
+		wW = 1 - sstep(1.2, 2.6, R);
+		wC = sstep(3.4, 5.6, R);
+		gLutR[i] = NEUTRAL[0] + (WARM[0] - NEUTRAL[0]) * wW;
+		gLutG[i] = NEUTRAL[1] + (WARM[1] - NEUTRAL[1]) * wW;
+		gLutB[i] = NEUTRAL[2] + (WARM[2] - NEUTRAL[2]) * wW;
+		gLutR[i] += (COOL[0] - gLutR[i]) * wC;
+		gLutG[i] += (COOL[1] - gLutG[i]) * wC;
+		gLutB[i] += (COOL[2] - gLutB[i]) * wC;
+	}
+})();
 
 function blurBox(src, scratch, dst, r) {
 	var x, y, k, acc, row, norm = 1 / (2 * r + 1);
@@ -72,14 +102,6 @@ function blurBox(src, scratch, dst, r) {
 		}
 	}
 }
-
-/* Glow cell values (soft-clipped DoG excess), then bilinear sample onto fb.
- * Bins accumulate in the PATTERN FRAME with decay: noise averages out, the
- * rotating wave pattern stays sharp. */
-var GN = 96, GEXT = 6.8, GSCALE = GN / (2 * GEXT), GLOW_K = 0.8, GLOW_TAU = 2;
-var gRaw = new Float32Array(GN * GN), gScr = new Float32Array(GN * GN);
-var gFine = new Float32Array(GN * GN), gWide = new Float32Array(GN * GN);
-var gAcc = new Float32Array(GN * GN), gVal = new Float32Array(GN * GN);
 
 function accumulateGlow(st, om, dt) {
 	var i, gx, gy, c, w, R, xp, yp, xt;
@@ -113,10 +135,12 @@ function drawGlow(st, om, ag) {
 	for (i = 0; i < GN * GN; i++) {
 		e = (gFine[i] - gWide[i]) * 4;
 		e = e > 0 ? e / (e + GLOW_K) : 0;
-		gVal[i] = 0.82 * e + 0.22 * gWide[i] / (gWide[i] + 1);
+		gFine[i] = 0.82 * e + 0.22 * gWide[i] / (gWide[i] + 1);
+		gArmE[i] = e;
 	}
-	blurBox(gVal, gScr, gFine, 2);
-	var tmp = gVal; gVal = gFine; gFine = tmp;
+	blurBox(gFine, gScr, gWide, 2);
+	blurBox(gArmE, gScr, gArmF, 2);
+	var tmp = gVal; gVal = gWide; gWide = tmp;
 	var cbg = Math.cos(ag - psi), sbg = Math.sin(ag - psi);
 	for (y = 0; y < H; y++) {
 		var wy = (y - CY) / (SCZ * ct);
@@ -129,11 +153,27 @@ function drawGlow(st, om, ag) {
 			var tx = fx - x0, ty = fy - y0;
 			var xa = Math.max(0, Math.min(GN - 1, x0)), xb = Math.max(0, Math.min(GN - 1, x0 + 1));
 			var ya = Math.max(0, Math.min(GN - 1, y0)), yb = Math.max(0, Math.min(GN - 1, y0 + 1));
-			v = (gVal[ya * GN + xa] * (1 - tx) + gVal[ya * GN + xb] * tx) * (1 - ty) +
-				(gVal[yb * GN + xa] * (1 - tx) + gVal[yb * GN + xb] * tx) * ty;
-			v *= 0.85;
+			var va = gVal[ya * GN + xa] * (1 - tx) + gVal[ya * GN + xb] * tx;
+			var vb2 = gVal[yb * GN + xa] * (1 - tx) + gVal[yb * GN + xb] * tx;
+			v = (va * (1 - ty) + vb2 * ty) * 0.85;
 			if (v < 0.004) continue;
-			addPx(x, y, 170 / 255, 200 / 255, 1, v);
+			var ea = gArmF[ya * GN + xa] * (1 - tx) + gArmF[ya * GN + xb] * tx;
+			var eb = gArmF[yb * GN + xa] * (1 - tx) + gArmF[yb * GN + xb] * tx;
+			var tA = (ea * (1 - ty) + eb * ty) * ARM_T;
+			if (tA > ARM_T) tA = ARM_T;
+			/* bilinear base color from the static radial LUT + blue arm tint */
+			var cr = gLutR[ya * GN + xa] * (1 - tx) + gLutR[ya * GN + xb] * tx;
+			var cg = gLutG[ya * GN + xa] * (1 - tx) + gLutG[ya * GN + xb] * tx;
+			var cbv = gLutB[ya * GN + xa] * (1 - tx) + gLutB[ya * GN + xb] * tx;
+			var cr2 = gLutR[yb * GN + xa] * (1 - tx) + gLutR[yb * GN + xb] * tx;
+			var cg2 = gLutG[yb * GN + xa] * (1 - tx) + gLutG[yb * GN + xb] * tx;
+			var cbv2 = gLutB[yb * GN + xa] * (1 - tx) + gLutB[yb * GN + xb] * tx;
+			var br = (cr * (1 - ty) + cr2 * ty), bg = (cg * (1 - ty) + cg2 * ty), bb = (cbv * (1 - ty) + cbv2 * ty);
+			addPx(x, y,
+				(br + (ARM_R - br) * tA) / 255,
+				(bg + (ARM_G - bg) * tA) / 255,
+				(bb + (ARM_B - bb) * tA) / 255,
+				v);
 		}
 	}
 }
@@ -220,22 +260,22 @@ function snapshot(st, om, tag) {
 	writePng(path.join(__dirname, 'logs', 'render-' + name + '-' + tag + '.png'), W, H, null);
 }
 
-var omGlow = name === 'legacy' ? P.bar.om : P.spiral.om;
+var omGlow = P.spiral.om;
 var st = Galaxy.createState(N);
 st.n = N;
 Galaxy.initStars(st, P, P.seed);
-Galaxy.settle(st, P, Math.round(P.tsettle / P.dtSettle), P.dtSettle, barOn, true);
+Galaxy.settle(st, P, Math.round(P.tsettle / P.dtSettle), P.dtSettle, false, true);
 var k;
 for (k = 0; k < Math.round(P.tsettle / DT); k++) accumulateGlow(st, omGlow, DT);
 snapshot(st, omGlow, 'settle');
 var mid = Math.round(75 / DT), end = Math.round(150 / DT);
 for (k = 0; k < mid; k++) {
-	Galaxy.step(st, P, DT, barOn, true);
+	Galaxy.step(st, P, DT, false, true);
 	accumulateGlow(st, omGlow, DT);
 }
 snapshot(st, omGlow, '75tu');
 for (k = mid; k < end; k++) {
-	Galaxy.step(st, P, DT, barOn, true);
+	Galaxy.step(st, P, DT, false, true);
 	accumulateGlow(st, omGlow, DT);
 }
 snapshot(st, omGlow, '150tu');

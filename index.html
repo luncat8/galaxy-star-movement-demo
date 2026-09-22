@@ -105,7 +105,11 @@
 			where stars bunch up as they pass, so the pattern never winds up while each star
 			streams through it. The response is steadiest between the inner resonance and
 			corotation (marked rings); beyond corotation the disk reads smoother and stars
-			disperse — that outer scatter is real orbit physics, not noise. The cold young disk
+			disperse — that outer scatter is real orbit physics, not noise. At reset the
+			warm disk is also seeded pre-aligned with the wave (each orbit's apocenter
+			following the same winding law), so full arms are visible immediately; outside
+			corotation that kinematic alignment shears away over tens of time units while
+			the wave's forcing keeps the inner arms locked. The cold young disk
 			(blue) responds most sharply, tracing crisp arms like the star-forming ridges of
 			real galaxies, while the warmer old disk stays smooth underneath. The bar (when on)
 			works the same way: inside corotation its field captures stars onto elongated
@@ -130,6 +134,19 @@
 (function() {
 'use strict';
 /* journal
+ * 0.3.0 (aligned ICs + color grade):
+ *  - S2 kinematic-aligned ICs: thin/thick disk stars seeded at t=0 onto epicycles
+ *    whose apocenters follow the spiral winding law (pattern frame); e(R) rises
+ *    0->0.14 over R 0.8-2.4, tau 2.2 taper beyond. Young disk exempt
+ *    (alignYoung 0): its own cold response already carries arms past R=4 and
+ *    crest-phase seeding measurably fights it. Inside CR the forcing maintains
+ *    the alignment; outside CR the seeded field shears away over ~30-70 tu
+ *    (curve-precession t_decorr) - an honest transient unwind, same leapfrog,
+ *    same potential; align=0 reproduces the legacy ICs (render-png noalign).
+ *  - glow color grade: radial warm core -> neutral mid -> blue rim ramp, arm
+ *    (DoG excess) light tinted bluer than the smooth disk; star classes warmed
+ *    (thin #ffe8c8, thick #ffc78e, bulge #ff8a55), young tracer bluer #6faaff;
+ *    central core light boosted.
  * 0.2.0 (calm look):
  *  - default preset = spiral-only calm (bar off, Om 0.30, As 0.06); bar stays an
  *    experiment toggle. Mode toggles fade gains over P.fade=8 tu (updateModeGains),
@@ -143,7 +160,7 @@
  */
 var NMAX = 10000, DT = 0.01, NTR = 8, TRN = 256, NEJ = 128;
 var CLS = ['thin disk', 'thick disk', 'bulge', 'halo belt', 'stream', 'young disk'];
-var COL = ['#fff4e0', '#ffcf9e', '#ff9a66', '#8fa8d8', '#54f6ff', '#7fb8ff'];
+var COL = ['#ffe8c8', '#ffc78e', '#ff8a55', '#8fa8d8', '#54f6ff', '#6faaff'];
 var CLS_A = [0.85, 0.32, 0.35, 0.16, 0.9, 1.0];
 var CLS_S = [7, 6, 6, 5, 7, 8];
 
@@ -185,6 +202,33 @@ var gCan = document.createElement('canvas');
 gCan.width = GN; gCan.height = GN;
 var gctx = gCan.getContext('2d');
 var gImg = gctx.createImageData(GN, GN);
+var gArmE = new Float32Array(GN * GN), gArmF = new Float32Array(GN * GN);
+/* Radial color grade, pattern frame (static): warm yellow-white core -> neutral
+ * mid-disk -> blue rim; smoothstep blends keep it band-free. Arm (DoG excess)
+ * light lerps toward the blue arm tint by the excess fraction. */
+var gLutR = new Float32Array(GN * GN), gLutG = new Float32Array(GN * GN), gLutB = new Float32Array(GN * GN);
+var ARM_R = 150, ARM_G = 186, ARM_B = 255, ARM_T = 0.55;
+(function buildGlowLut() {
+	var NEUTRAL = [222, 224, 238], WARM = [255, 224, 178], COOL = [158, 194, 255];
+	function sstep(a, b, x) {
+		var t = (x - a) / (b - a);
+		t = t < 0 ? 0 : t > 1 ? 1 : t;
+		return t * t * (3 - 2 * t);
+	}
+	var gx, gy, i = 0, xp, yp, R, wW, wC;
+	for (gy = 0; gy < GN; gy++) for (gx = 0; gx < GN; gx++, i++) {
+		xp = (gx + 0.5) / GSCALE - GEXT; yp = (gy + 0.5) / GSCALE - GEXT;
+		R = Math.sqrt(xp * xp + yp * yp);
+		wW = 1 - sstep(1.2, 2.6, R);
+		wC = sstep(3.4, 5.6, R);
+		gLutR[i] = NEUTRAL[0] + (WARM[0] - NEUTRAL[0]) * wW;
+		gLutG[i] = NEUTRAL[1] + (WARM[1] - NEUTRAL[1]) * wW;
+		gLutB[i] = NEUTRAL[2] + (WARM[2] - NEUTRAL[2]) * wW;
+		gLutR[i] += (COOL[0] - gLutR[i]) * wC;
+		gLutG[i] += (COOL[1] - gLutG[i]) * wC;
+		gLutB[i] += (COOL[2] - gLutB[i]) * wC;
+	}
+})();
 
 function refreshRings() {
 	rings = Galaxy.resonances(P);
@@ -457,12 +501,17 @@ function drawGlow(ag, ct, s, dtTu) {
 		e = (gFine[i] - gWide[i]) * 4;
 		e = e > 0 ? e / (e + GLOW_K) : 0;
 		gFine[i] = 0.82 * e + 0.22 * gWide[i] / (gWide[i] + 1);
+		gArmE[i] = e;
 	}
 	blurBox(gFine, gScratch, gWide, 2);
+	blurBox(gArmE, gScratch, gArmF, 2);
 	var d = gImg.data;
 	for (i = 0; i < GN * GN; i++) {
 		v = gWide[i] * 0.85;
-		d[j] = 170; d[j + 1] = 200; d[j + 2] = 255;
+		var tA = (gArmF[i] > 1 ? 1 : gArmF[i]) * ARM_T;
+		d[j] = gLutR[i] + (ARM_R - gLutR[i]) * tA;
+		d[j + 1] = gLutG[i] + (ARM_G - gLutG[i]) * tA;
+		d[j + 2] = gLutB[i] + (ARM_B - gLutB[i]) * tA;
 		d[j + 3] = 255 * v;
 		j += 4;
 	}
@@ -495,10 +544,10 @@ function render() {
 		ctx.globalAlpha = 1;
 		ctx.fillStyle = bgGrad;
 		ctx.fillRect(0, 0, W, H);
-		var cg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 150 * ui.zoom);
-		cg.addColorStop(0, 'rgba(255,220,150,0.30)');
-		cg.addColorStop(0.3, 'rgba(255,150,100,0.08)');
-		cg.addColorStop(1, 'rgba(255,100,50,0)');
+		var cg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 160 * ui.zoom);
+		cg.addColorStop(0, 'rgba(255,222,155,0.36)');
+		cg.addColorStop(0.32, 'rgba(255,160,95,0.10)');
+		cg.addColorStop(1, 'rgba(255,105,50,0)');
 		ctx.fillStyle = cg;
 		ctx.fillRect(0, 0, W, H);
 	}

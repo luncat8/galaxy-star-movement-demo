@@ -177,3 +177,26 @@ Soft-clip tone map (v/(v+k)) for the core. Good enough to judge arm/bar/
 ring morphology and background dilution at settle vs T=150. Deterministic
 same-seed physics ⇒ renders are comparable across parameter changes; fix
 the bar phase (or note Om*T) when comparing snapshots.
+
+## 20. Judge IC experiments on renders + per-class, not all-disk annulus means
+
+S2 kinematic-aligned ICs: all-disk narrow-annulus m=2 amps were nearly
+identical align=0 vs align=1, yet the renders differ sharply at settle
+(connected ridges vs detached clumps). A smooth aligned ellipse field DILUTES
+per-annulus contrast while improving arm connectivity — amp/phase metrics see
+"no change", eyes see the product. Conversely the committed young=1.3x seeding
+looked fine in band means but halved the young disk's own outer response
+(0.37->0.20) and washed the T=150 render. Rules: (a) for IC/initial-structure
+changes, gate on same-seed headless render A/B at settle/T=75/T=150; (b) run
+per-class profiles — the coldest population dominates the visual and already
+IS the strongest spiral response; never seed over it (alignYoung 0), seed only
+the warm classes that can't organize themselves; (c) when a measurement
+contradicts another from the same script, bit-compare the untouched subset
+(deterministic seeds make this exact) before trusting either.
+
+## 21. sed-renaming params across scripts: run the suite before committing
+
+A batch `P.align = 0;` insert left one copy at top level of check-jacobi.js
+(`P` undefined there) — committed with the gate crashing. Any param-plumbing
+sweep across experiments/ must end with a full `for f in check-*.js; do node
+$f; done` before commit; a red suite is part of the diff.
