@@ -10,6 +10,7 @@ function stubCtx() {
 	return new Proxy({
 		canvas: null,
 		createRadialGradient: function() { return grad; },
+		createImageData: function(w, h) { return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }; },
 		getBoundingClientRect: undefined
 	}, {
 		get: function(t, k) {
@@ -37,9 +38,16 @@ function stubEl(id) {
 }
 
 var els = {};
+var SLIDER_VALUES = {
+	's-speed': '0.03', 's-ab': '0.06', 's-as': '0.06', 's-ob': '0.36',
+	's-os': '0.30', 's-eta': '0.05', 's-sig': '0.1', 's-tilt': '20'
+};
 global.document = {
 	getElementById: function(id) {
-		if (!els[id]) els[id] = stubEl(id);
+		if (!els[id]) {
+			els[id] = stubEl(id);
+			if (SLIDER_VALUES[id]) els[id].value = SLIDER_VALUES[id];
+		}
 		return els[id];
 	},
 	createElement: function() { return stubEl('dyn'); },

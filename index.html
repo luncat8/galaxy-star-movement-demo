@@ -61,7 +61,7 @@
 			<button data-n="10000">10k</button>
 		</div>
 		<h2>Run</h2>
-		<div class="row"><label>speed</label><input id="s-speed" type="range" min="0.02" max="0.2" step="0.01" value="0.1"><output id="o-speed"></output></div>
+		<div class="row"><label>speed</label><input id="s-speed" type="range" min="0.02" max="0.2" step="0.01" value="0.03"><output id="o-speed"></output></div>
 		<div class="row"><label>tilt</label><input id="s-tilt" type="range" min="0" max="60" step="1" value="20"><output id="o-tilt"></output></div>
 		<div class="btns">
 			<button id="b-pause">pause</button>
@@ -70,21 +70,22 @@
 		</div>
 		<h2>Field</h2>
 		<div class="row"><label>bar Ab</label><input id="s-ab" type="range" min="0" max="0.15" step="0.005" value="0.06"><output id="o-ab"></output></div>
-		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.04"><output id="o-as"></output></div>
+		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.06"><output id="o-as"></output></div>
 		<div class="row"><label>bar Ωb</label><input id="s-ob" type="range" min="0.2" max="0.6" step="0.01" value="0.36"><output id="o-ob"></output></div>
-		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.5" step="0.01" value="0.36"><output id="o-os"></output></div>
+		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.5" step="0.01" value="0.30"><output id="o-os"></output></div>
 		<h2>Friction (teaching)</h2>
 		<div class="row"><label>drag η</label><input id="s-eta" type="range" min="0" max="0.1" step="0.005" value="0.05"><output id="o-eta"></output></div>
 		<div class="row"><label>diffus σ</label><input id="s-sig" type="range" min="0" max="0.2" step="0.01" value="0.1"><output id="o-sig"></output></div>
 		<h2>Overlays</h2>
 		<div class="chk">
-			<label><input id="c-bar" type="checkbox" checked>bar</label>
+			<label><input id="c-bar" type="checkbox">bar</label>
 			<label><input id="c-spiral" type="checkbox" checked>spiral</label>
 			<label><input id="c-stream" type="checkbox" checked>stream</label>
+			<label><input id="c-glow" type="checkbox" checked>glow</label>
 			<label><input id="c-drag" type="checkbox">drag</label>
 			<label><input id="c-diff" type="checkbox">drag+diff</label>
 			<label><input id="c-trails" type="checkbox">trails</label>
-			<label><input id="c-rings" type="checkbox" checked>rings</label>
+			<label><input id="c-rings" type="checkbox">rings</label>
 			<label><input id="c-rot" type="checkbox" checked>rotcurve</label>
 			<label><input id="c-corot" type="checkbox">corot</label>
 		</div>
@@ -93,26 +94,33 @@
 		<details>
 			<summary>ⓘ approach</summary>
 			<p>Every star feels one fixed “field”: the galaxy's gravitational potential, built
-			from smooth components (thin + thick disk, bulge, halo) plus two rigidly rotating
-			m=2 waves — a bar and a logarithmic spiral, corotating at one pattern speed so the
-			response never beats (detune Ωs and watch beating wash the arms out). Stars are
+			from smooth components (thin + thick disk, bulge, halo) plus rigidly rotating
+			m=2 waves — a logarithmic spiral (the calm default) and an optional bar. Stars are
 			integrated on their own orbits with a symplectic leapfrog; there are no star–star
-			forces and no friction.</p>
+			forces and no friction. Toggling a mode fades its amplitude over a few time units,
+			so experiments never jolt the disk. When bar and spiral share one pattern speed the
+			response never beats; detune Ωs with the bar on and the HUD warns that beating
+			washes the arms out.</p>
 			<p>The spiral arms are not material — they are the rotating crests of the field
 			where stars bunch up as they pass, so the pattern never winds up while each star
-			streams through it. The cold young disk (blue) responds most sharply, tracing crisp
-			arms like the star-forming ridges of real galaxies, while the warmer old disk stays
-			smooth underneath. The bar works the same way: inside corotation its field
-			captures stars onto elongated resonant (x1) orbits, feeding the bar; at resonances
-			stars trade angular momentum with the pattern and migrate — outward into rings, or
-			onto eccentric inclined orbits that puff into the halo belt. That is how disk turns
-			into bar and belt without spawning anything.</p>
+			streams through it. The response is steadiest between the inner resonance and
+			corotation (marked rings); beyond corotation the disk reads smoother and stars
+			disperse — that outer scatter is real orbit physics, not noise. The cold young disk
+			(blue) responds most sharply, tracing crisp arms like the star-forming ridges of
+			real galaxies, while the warmer old disk stays smooth underneath. The bar (when on)
+			works the same way: inside corotation its field captures stars onto elongated
+			resonant (x1) orbits; at resonances stars trade angular momentum with the pattern
+			and migrate — outward into rings, or onto eccentric inclined orbits that puff into
+			the halo belt. That is how disk turns into bar and belt without spawning anything.</p>
+			<p>The soft glow under the stars is a surface-brightness estimator, not a force:
+			disk stars binned, blurred, and filtered to show only the non-axisymmetric excess —
+			the unresolved light a telescope would blend into luminous arms.</p>
 			<p>Because the system is Hamiltonian — dissipation free, symplectically integrated —
 			nothing decays, nothing clumps; the same stars are there forever. (Optional “drag”
 			toggle shows the opposite: pure friction piles stars into the center — why friction
 			is the wrong tool here.)</p>
 			<p>Keys: <kbd>space</kbd> pause <kbd>s</kbd> step <kbd>r</kbd> reset
-			<kbd>c</kbd> corot <kbd>1..5</kbd> stream/trails/rings/rotcurve/drag.
+			<kbd>c</kbd> corot <kbd>g</kbd> glow <kbd>1..5</kbd> stream/trails/rings/rotcurve/drag.
 			Drag to rotate/tilt, wheel to zoom, double-click resets the view.</p>
 		</details>
 	</div>
@@ -121,10 +129,22 @@
 <script>
 (function() {
 'use strict';
+/* journal
+ * 0.2.0 (calm look):
+ *  - default preset = spiral-only calm (bar off, Om 0.30, As 0.06); bar stays an
+ *    experiment toggle. Mode toggles fade gains over P.fade=8 tu (updateModeGains),
+ *    EJ diagnostic pauses while fading.
+ *  - render: real-time accumulator (speed = sim tu/s), position interpolation
+ *    between substeps (sub-pixel motion), pattern-frame accumulated glow underlay
+ *    (decay tau 2 tu, DoG excess + faint base) - the "nebula layer" that makes the
+ *    beltoforion reference calm; class alphas rebalanced (halo/bulge fainter).
+ *  - speed slider default 0.03; detuned Omega HUD warning; rings default off.
+ * 0.1.x: initial demo (see archive/).
+ */
 var NMAX = 10000, DT = 0.01, NTR = 8, TRN = 256, NEJ = 128;
 var CLS = ['thin disk', 'thick disk', 'bulge', 'halo belt', 'stream', 'young disk'];
 var COL = ['#fff4e0', '#ffcf9e', '#ff9a66', '#8fa8d8', '#54f6ff', '#7fb8ff'];
-var CLS_A = [0.9, 0.5, 0.45, 0.3, 1.0, 1.0];
+var CLS_A = [0.85, 0.32, 0.35, 0.16, 0.9, 1.0];
 var CLS_S = [7, 6, 6, 5, 7, 8];
 
 var P = Galaxy.defaultParams();
@@ -132,9 +152,9 @@ var st = Galaxy.createState(NMAX);
 var rngDrag = Galaxy.RNG(999);
 
 var ui = {
-	n: 4000, speed: 0.1, tilt: 20 * Math.PI / 180, yaw: 0, zoom: 1,
-	bar: true, spiral: true, stream: true, drag: false, diff: false,
-	trails: false, rings: true, rot: true, corot: false, paused: false,
+	n: 4000, speed: 0.03, tilt: 20 * Math.PI / 180, yaw: 0, zoom: 1,
+	bar: false, spiral: true, stream: true, glow: true, drag: false, diff: false,
+	trails: false, rings: false, rot: true, corot: false, paused: false,
 	eta: 0.05, sig: 0.1
 };
 
@@ -150,16 +170,31 @@ var trX = new Float32Array(NTR * TRN), trY = new Float32Array(NTR * TRN), trZ = 
 var trHead = new Int32Array(NTR), trFill = new Int32Array(NTR);
 var ej0 = new Float64Array(NEJ), ejMax = 0;
 var rings = null, ringDefs = [];
+var prevX = new Float64Array(NMAX), prevY = new Float64Array(NMAX), prevZ = new Float64Array(NMAX);
+var simAcc = 0, alphaSim = 1, fadeWas = false, lastDtTu = 0;
+
+/* Glow underlay: disk stars binned on a coarse grid IN THE PATTERN FRAME and
+ * accumulated with decay, so photon shot noise averages out while the wave
+ * pattern stays sharp; DoG filter keeps only the non-axisymmetric excess
+ * (bar/arms). Surface-brightness estimator, not a force. Preallocated. */
+var GN = 96, GEXT = 6.8, GSCALE = GN / (2 * GEXT), GLOW_K = 0.8, GLOW_TAU = 2;
+var gRaw = new Float32Array(GN * GN), gScratch = new Float32Array(GN * GN);
+var gFine = new Float32Array(GN * GN), gWide = new Float32Array(GN * GN);
+var gAcc = new Float32Array(GN * GN);
+var gCan = document.createElement('canvas');
+gCan.width = GN; gCan.height = GN;
+var gctx = gCan.getContext('2d');
+var gImg = gctx.createImageData(GN, GN);
 
 function refreshRings() {
 	rings = Galaxy.resonances(P);
 	ringDefs = [
-		[rings.bar.ilr, '#ff6b6b', 'bILR', null, 0],
-		[rings.bar.cr, '#51f08a', 'bCR', null, 0],
-		[rings.bar.olr, '#6bb8ff', 'bOLR', null, 0],
-		[rings.spiral.ilr, '#ff6b6b', 'sILR', [4, 3], 30],
-		[rings.spiral.cr, '#51f08a', 'sCR', [4, 3], 30],
-		[rings.spiral.olr, '#6bb8ff', 'sOLR', [4, 3], 30]
+		[rings.bar.ilr, '#ff6b6b', 'bILR', null, 0, 'bar'],
+		[rings.bar.cr, '#51f08a', 'bCR', null, 0, 'bar'],
+		[rings.bar.olr, '#6bb8ff', 'bOLR', null, 0, 'bar'],
+		[rings.spiral.ilr, '#ff6b6b', 'sILR', [4, 3], 30, 'spiral'],
+		[rings.spiral.cr, '#51f08a', 'sCR', [4, 3], 30, 'spiral'],
+		[rings.spiral.olr, '#6bb8ff', 'sOLR', [4, 3], 30, 'spiral']
 	];
 }
 var settleLeft = 0;
@@ -282,7 +317,7 @@ function ejOpts() {
 
 function updateEJ() {
 	var om = ejOm(), o, i, w;
-	if (om === null) return;
+	if (om === null || modeFading()) return;
 	o = ejOpts();
 	w = 0;
 	for (i = 0; i < NEJ; i++) {
@@ -294,6 +329,9 @@ function updateEJ() {
 }
 
 function reset() {
+	P.bar.g = ui.bar ? 1 : 0;
+	P.spiral.g = ui.spiral ? 1 : 0;
+	gAcc.fill(0);
 	Galaxy.initStars(st, P, P.seed);
 	st.n = NMAX;
 	settleLeft = Math.round(P.tsettle / P.dtSettle);
@@ -302,18 +340,40 @@ function reset() {
 
 function finishSettle() {
 	st.n = ui.n;
+	prevX.set(st.x); prevY.set(st.y); prevZ.set(st.z);
+	simAcc = 0; alphaSim = 1;
 	pickTracers();
 	snapEJ();
 	settleDiv.hidden = true;
 }
 
-function advance() {
-	var steps = Math.max(1, Math.round(ui.speed / DT)), k;
-	var t0 = performance.now();
-	for (k = 0; k < steps; k++) Galaxy.step(st, P, DT, ui.bar, ui.spiral);
+function modeFading() {
+	return (P.bar.g > 0.001 && P.bar.g < 0.999) ||
+		(P.spiral.g > 0.001 && P.spiral.g < 0.999);
+}
+
+/* Advance sim time by dtTu (accumulated real time x speed), in fixed DT substeps.
+ * Render interpolates between the last two substeps (alphaSim) so motion stays
+ * sub-pixel smooth at any speed. */
+function advance(dtTu) {
+	var t0 = performance.now(), k;
+	lastDtTu = dtTu;
+	simAcc += dtTu;
+	var steps = Math.min(16, Math.floor(simAcc / DT));
+	if (steps < 0) steps = 0;
+	simAcc = steps >= 16 ? 0 : simAcc - steps * DT;
+	Galaxy.updateModeGains(P, dtTu, ui.bar, ui.spiral);
+	var fading = modeFading();
+	if (fadeWas && !fading) snapEJ();
+	fadeWas = fading;
+	for (k = 0; k < steps; k++) {
+		prevX.set(st.x); prevY.set(st.y); prevZ.set(st.z);
+		Galaxy.step(st, P, DT, ui.bar, ui.spiral);
+	}
+	alphaSim = simAcc > 0 ? simAcc / DT : 1;
 	if (ui.drag) {
 		var s = ui.diff ? ui.sig : 0;
-		Galaxy.applyDrag(st, ui.speed, ui.eta, s, rngDrag);
+		Galaxy.applyDrag(st, dtTu, ui.eta, s, rngDrag);
 	}
 	simMs = performance.now() - t0;
 	pushTracers();
@@ -340,10 +400,89 @@ function project(x, y, z, cb, sb, ct, st_, out) {
 
 var ptmp = [0, 0];
 
+/* Separable box blur with sliding-window sums (clamped edges). */
+function blurBox(src, scratch, dst, r) {
+	var x, y, k, acc, row, norm = 1 / (2 * r + 1);
+	for (y = 0; y < GN; y++) {
+		row = y * GN; acc = 0;
+		for (k = -r; k <= r; k++) acc += src[row + Math.min(GN - 1, Math.max(0, k))];
+		for (x = 0; x < GN; x++) {
+			scratch[row + x] = acc * norm;
+			acc += src[row + Math.min(GN - 1, x + r + 1)] - src[row + Math.max(0, x - r)];
+		}
+	}
+	for (x = 0; x < GN; x++) {
+		acc = 0;
+		for (k = -r; k <= r; k++) acc += scratch[Math.min(GN - 1, Math.max(0, k)) * GN + x];
+		for (y = 0; y < GN; y++) {
+			dst[y * GN + x] = acc * norm;
+			acc += scratch[Math.min(GN - 1, y + r + 1) * GN + x] - scratch[Math.max(0, y - r) * GN + x];
+		}
+	}
+}
+
+var gMid = document.createElement('canvas');
+gMid.width = 3 * GN; gMid.height = 3 * GN;
+var gMidCtx = gMid.getContext('2d');
+
+function drawGlow(ag, ct, s, dtTu) {
+	var i, gx, gy, c, w, e, v, j = 0, R, xp, yp, xt;
+	var psi = (ui.bar ? P.bar.om : P.spiral.om) * st.t;
+	var cps = Math.cos(psi), sps = Math.sin(psi);
+	gRaw.fill(0);
+	for (i = 0; i < st.n; i++) {
+		c = st.cls[i];
+		w = c === 5 ? 1 : c === 0 ? 0.75 : c === 1 ? 0.45 : 0;
+		if (w === 0) continue;
+		xp = st.x[i]; yp = st.y[i];
+		R = Math.sqrt(xp * xp + yp * yp);
+		if (R > GEXT) continue;
+		w *= Math.min(1, (GEXT - R) / 0.7);
+		xt = xp * cps + yp * sps; yp = -xp * sps + yp * cps; xp = xt;
+		gx = (xp + GEXT) * GSCALE | 0;
+		if (gx < 0 || gx >= GN) continue;
+		gy = (yp + GEXT) * GSCALE | 0;
+		if (gy < 0 || gy >= GN) continue;
+		gRaw[gy * GN + gx] += w;
+	}
+	if (dtTu > 0) {
+		var dec = Math.exp(-dtTu / GLOW_TAU), inj = 1 - dec;
+		for (i = 0; i < GN * GN; i++) gAcc[i] = gAcc[i] * dec + gRaw[i] * inj;
+	} else {
+		for (i = 0; i < GN * GN; i++) gAcc[i] = gRaw[i];
+	}
+	blurBox(gAcc, gScratch, gFine, 4);
+	blurBox(gAcc, gScratch, gWide, 12);
+	for (i = 0; i < GN * GN; i++) {
+		e = (gFine[i] - gWide[i]) * 4;
+		e = e > 0 ? e / (e + GLOW_K) : 0;
+		gFine[i] = 0.82 * e + 0.22 * gWide[i] / (gWide[i] + 1);
+	}
+	blurBox(gFine, gScratch, gWide, 2);
+	var d = gImg.data;
+	for (i = 0; i < GN * GN; i++) {
+		v = gWide[i] * 0.85;
+		d[j] = 170; d[j + 1] = 200; d[j + 2] = 255;
+		d[j + 3] = 255 * v;
+		j += 4;
+	}
+	gctx.putImageData(gImg, 0, 0);
+	gMidCtx.clearRect(0, 0, 3 * GN, 3 * GN);
+	gMidCtx.drawImage(gCan, 0, 0, 3 * GN, 3 * GN);
+	ctx.globalCompositeOperation = 'lighter';
+	ctx.globalAlpha = 0.85;
+	ctx.save();
+	var cbg = Math.cos(ag - psi), sbg = Math.sin(ag - psi);
+	ctx.transform(s * cbg, -s * ct * sbg, s * sbg, s * ct * cbg, CX, CY);
+	ctx.drawImage(gMid, -GEXT, -GEXT, 2 * GEXT, 2 * GEXT);
+	ctx.restore();
+	ctx.globalAlpha = 1;
+}
+
 function render() {
 	var i, sx, sy, az, dep, size, spr;
 	var ct = Math.cos(ui.tilt), st_ = Math.sin(ui.tilt);
-	var a = ui.yaw + (ui.corot ? P.bar.om * st.t : 0);
+	var a = ui.yaw + (ui.corot ? (ui.bar ? P.bar.om : P.spiral.om) * st.t : 0);
 	var cb = Math.cos(a), sb = Math.sin(a);
 	SCZ = SC * ui.zoom;
 	if (ui.trails) {
@@ -364,17 +503,21 @@ function render() {
 		ctx.fillRect(0, 0, W, H);
 	}
 	if (ui.rings) drawRings(ct);
+	if (ui.glow && !ui.trails) drawGlow(a, ct, SCZ, lastDtTu);
 	ctx.globalCompositeOperation = 'lighter';
 	var n = st.n, x = st.x, y = st.y, z = st.z, cls = st.cls;
 	var showStream = ui.stream;
 	for (i = 0; i < n; i++) {
 		var c = cls[i];
 		if (c === 4 && !showStream) continue;
-		var xr = x[i] * cb + y[i] * sb, yr = -x[i] * sb + y[i] * cb;
-		az = z[i] < 0 ? -z[i] : z[i];
+		var xi = prevX[i] + (x[i] - prevX[i]) * alphaSim;
+		var yi = prevY[i] + (y[i] - prevY[i]) * alphaSim;
+		var zi = prevZ[i] + (z[i] - prevZ[i]) * alphaSim;
+		var xr = xi * cb + yi * sb, yr = -xi * sb + yi * cb;
+		az = zi < 0 ? -zi : zi;
 		dep = 1 - 0.25 * Math.min(az / 3, 1);
 		sx = CX + SCZ * xr;
-		sy = CY + SCZ * (yr * ct - z[i] * st_);
+		sy = CY + SCZ * (yr * ct - zi * st_);
 		if (sx < -8 || sx > W + 8 || sy < -8 || sy > H + 8) continue;
 		size = CLS_S[c] * (0.7 + 0.3 * dep);
 		ctx.globalAlpha = dep * CLS_A[c];
@@ -392,6 +535,7 @@ function drawRings(ct) {
 	ctx.lineWidth = 1;
 	ctx.font = '10px monospace';
 	for (d = 0; d < ringDefs.length; d++) {
+		if (ringDefs[d][5] === 'bar' && !ui.bar) continue;
 		ctx.strokeStyle = ringDefs[d][1];
 		ctx.fillStyle = ringDefs[d][1];
 		ctx.setLineDash(ringDefs[d][3] || []);
@@ -504,8 +648,10 @@ function fmtEJ() {
 
 function updateHUD() {
 	var rot = st.t / 6.2831853;
+	var det = ui.bar && ui.spiral && Math.abs(P.bar.om - P.spiral.om) > 1e-6 ?
+		'  DETUNED: beating expected' : '';
 	hud.textContent = 'N ' + st.n + '  ' + fpsEMA.toFixed(0) + 'fps sim ' + simMs.toFixed(1) +
-		'ms  t ' + rot.toFixed(1) + ' rot  EJ ' + fmtEJ() + '  caps ' + st.caps;
+		'ms  t ' + rot.toFixed(1) + ' rot  EJ ' + fmtEJ() + '  caps ' + st.caps + det;
 }
 
 function loop(now) {
@@ -525,7 +671,7 @@ function loop(now) {
 		return;
 	}
 	if (!ui.paused) {
-		advance();
+		advance(Math.min(dtms, 100) / 1000 * ui.speed * 60);
 		if (frame % 30 === 0) updateEJ();
 	}
 	frame++;
@@ -568,6 +714,7 @@ function init() {
 	bindCheck('c-bar', 'bar', snapEJ);
 	bindCheck('c-spiral', 'spiral', snapEJ);
 	bindCheck('c-stream', 'stream');
+	bindCheck('c-glow', 'glow');
 	bindCheck('c-drag', 'drag');
 	bindCheck('c-diff', 'diff');
 	bindCheck('c-trails', 'trails');
@@ -586,7 +733,7 @@ function init() {
 	$('b-pause').addEventListener('click', togglePause);
 	$('b-step').addEventListener('click', function() {
 		if (settleLeft > 0 || !ui.paused) return;
-		advance();
+		advance(DT);
 		frame++;
 		render();
 		updateHUD();
@@ -622,6 +769,7 @@ function onKey(e) {
 	else if (k === '3') setCheck('c-rings', 'rings');
 	else if (k === '4') setCheck('c-rot', 'rot');
 	else if (k === '5') setCheck('c-drag', 'drag');
+	else if (k === 'g' || k === 'G') setCheck('c-glow', 'glow');
 }
 
 init();

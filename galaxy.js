@@ -12,8 +12,9 @@ function defaultParams() {
 		thick: { md: 0.30, a: 1.00, b: 0.30 },
 		bulge: { mb: 0.20, s: 0.20 },
 		halo: { vh2: 0.536, rc: 0.50 },
-		bar: { ab: 0.060, rb: 1.20, hb: 0.30, om: 0.36 },
-		spiral: { as: 0.040, rp: 2.80, sig: 0.50, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.36 },
+		bar: { ab: 0.060, rb: 1.20, hb: 0.30, om: 0.36, g: 1 },
+		spiral: { as: 0.040, rp: 2.80, sig: 0.50, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.36, g: 1 },
+		fade: 8,
 		rmin: 0.02,
 		vmax: 3.0,
 		tramp: 20,
@@ -104,6 +105,20 @@ function rampFactor(t, P) {
 	return x * x * (3 - 2 * x);
 }
 
+/* Per-mode amplitude gains: multiplicative on top of the global ramp, eased
+ * toward on/off over P.fade so mid-run toggles do not jolt the disk. */
+function gainToward(g, target, step) {
+	if (g < target) return Math.min(target, g + step);
+	if (g > target) return Math.max(target, g - step);
+	return g;
+}
+
+function updateModeGains(P, dt, barOn, spirOn) {
+	var s = dt / P.fade;
+	P.bar.g = gainToward(P.bar.g, barOn ? 1 : 0, s);
+	P.spiral.g = gainToward(P.spiral.g, spirOn ? 1 : 0, s);
+}
+
 /* Axisymmetric circular speed at cylindrical R, z=0 (closed form). */
 function vc(R, P) {
 	var G = P.G, v2 = 0, d, q;
@@ -155,7 +170,7 @@ function potential(x, y, z, t, P, o) {
 		u = R / P.bar.rb; u2 = u * u;
 		fb = u2 / (1 + u2 * u2);
 		Zb = Math.exp(-z * z / (P.bar.hb * P.bar.hb));
-		ph += ramp * P.bar.ab * fb * Zb * Math.cos(2 * (phi - P.bar.om * t));
+		ph += ramp * P.bar.g * P.bar.ab * fb * Zb * Math.cos(2 * (phi - P.bar.om * t));
 	}
 	if (spirOn && ramp > 0 && P.spiral.as !== 0) {
 		p = spiralP(P);
@@ -163,7 +178,7 @@ function potential(x, y, z, t, P, o) {
 		lr = Math.log(R / P.spiral.rp) / P.spiral.sig;
 		fs = Math.exp(-0.5 * lr * lr);
 		Zs = Math.exp(-z * z / (P.spiral.zs * P.spiral.zs));
-		ph += ramp * P.spiral.as * fs * Zs * Math.cos(2 * (phi - P.spiral.om * t - p * L));
+		ph += ramp * P.spiral.g * P.spiral.as * fs * Zs * Math.cos(2 * (phi - P.spiral.om * t - p * L));
 	}
 	return ph;
 }
@@ -202,7 +217,7 @@ function accelSingle(x, y, z, t, P, o, out) {
 			dZ = Z * (-2 * z / (P.bar.hb * P.bar.hb));
 			var bb = 2 * P.bar.om * t, cb = Math.cos(bb), sb = Math.sin(bb);
 			C = c2 * cb + s2 * sb; S2 = s2 * cb - c2 * sb;
-			A = ramp * P.bar.ab;
+			A = ramp * P.bar.g * P.bar.ab;
 			fR = -A * Z * df * C;
 			fp = A * Z * f * 2 * S2 / Rc;
 			fz = -A * f * C * dZ;
@@ -221,7 +236,7 @@ function accelSingle(x, y, z, t, P, o, out) {
 			dZ = Z * (-2 * z / (P.spiral.zs * P.spiral.zs));
 			var bs = 2 * (P.spiral.om * t + p * L), cs = Math.cos(bs), ss = Math.sin(bs);
 			C = c2 * cs + s2 * ss; S2 = s2 * cs - c2 * ss;
-			A = ramp * P.spiral.as;
+			A = ramp * P.spiral.g * P.spiral.as;
 			fR = -A * Z * (df * C + f * 2 * S2 * p * dL);
 			fp = A * Z * f * 2 * S2 / Rc;
 			fz = -A * f * C * dZ;
@@ -242,7 +257,7 @@ function computeAccel(st, P, t, barOn, spirOn) {
 	var bb = 2 * P.bar.om * t, cb = Math.cos(bb), sb = Math.sin(bb);
 	var bs0 = 2 * P.spiral.om * t, p = spiralP(P);
 	var cs0 = Math.cos(bs0), ss0 = Math.sin(bs0);
-	var Ab = barOn ? ramp * P.bar.ab : 0, As = spirOn ? ramp * P.spiral.as : 0;
+	var Ab = barOn ? ramp * P.bar.g * P.bar.ab : 0, As = spirOn ? ramp * P.spiral.g * P.spiral.as : 0;
 	var rb = P.bar.rb, hb2 = P.bar.hb * P.bar.hb;
 	var rp = P.spiral.rp, sig = P.spiral.sig, sig2 = sig * sig, r1 = P.spiral.r1;
 	var r1lo = r1 - 0.3, r1hi = r1 + 0.3, lrp1c = Math.log(rp / r1);
@@ -555,7 +570,7 @@ return {
 	vc: vc, omega: omega, kappa: kappa,
 	resonances: resonances,
 	energy1: energy1, jacobi1: jacobi1,
-	rampFactor: rampFactor, spiralP: spiralP,
+	rampFactor: rampFactor, updateModeGains: updateModeGains, spiralP: spiralP,
 	buildDiskTable: buildDiskTable, sampleDisk: sampleDisk,
 	classFor: classFor,
 	RNG: RNG
