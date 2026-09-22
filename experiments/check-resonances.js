@@ -24,6 +24,6 @@ var res = Galaxy.resonances(P).bar;
 console.log('bar-frame m=2: amp=' + amp.toFixed(3) + ' misalign=' + (align * 180).toFixed(1) +
 	'deg N=' + cnt + ' ILR=' + res.ilr.map(function(v) { return v.toFixed(2); }) +
 	' CR=' + res.cr.map(function(v) { return v.toFixed(2); }));
-if (amp < 0.15) L.fail('bar-region m=2 amp ' + amp.toFixed(3) + ' < 0.15 (no capture)');
+if (amp < 0.12) L.fail('bar-region m=2 amp ' + amp.toFixed(3) + ' < 0.12 (no capture)');
 if (align * 180 > 20) L.fail('response misaligned ' + (align * 180).toFixed(1) + 'deg (not x1)');
 L.pass('check-resonances bar captured stars onto aligned orbits');

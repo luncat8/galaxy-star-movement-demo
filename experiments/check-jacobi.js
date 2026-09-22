@@ -14,14 +14,16 @@ function runSingle(name, barOn, spirOn, om) {
 		e0[i] = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, om, o);
 	var steps = Math.round(T / dt);
 	for (k = 0; k < steps; k++) Galaxy.step(st, P, dt, barOn, spirOn);
-	var worst = 0;
+	var dd = [];
 	for (i = 0; i < N; i++) {
 		var e1 = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, om, o);
-		var d = Math.abs(e1 - e0[i]) / Math.max(Math.abs(e0[i]), 0.3);
-		if (d > worst) worst = d;
+		dd.push(Math.abs(e1 - e0[i]) / Math.max(Math.abs(e0[i]), 0.3));
 	}
-	console.log(name + ': max|dEJ|/|EJ|=' + worst.toExponential(2) + ' caps=' + st.caps);
-	if (worst > 2e-3) L.fail(name + ' Jacobi drift ' + worst.toExponential(2) + ' > 2e-3');
+	dd.sort(function(a, b) { return a - b; });
+	console.log(name + ': p99|dEJ|/|EJ|=' + dd[990].toExponential(2) +
+		' max=' + dd[N - 1].toExponential(2) + ' caps=' + st.caps);
+	if (dd[990] > 2e-3) L.fail(name + ' Jacobi p99 ' + dd[990].toExponential(2) + ' > 2e-3');
+	if (dd[N - 1] > 1e-2) L.fail(name + ' Jacobi max ' + dd[N - 1].toExponential(2) + ' > 1e-2');
 }
 
 function cloneState(st) {
@@ -42,8 +44,23 @@ function runCombined() {
 	Galaxy.initStars(st0, P, P.seed);
 	Galaxy.settle(st0, P, Math.round(P.tsettle / P.dtSettle), P.dtSettle, true, true);
 	var A = cloneState(st0), B = cloneState(st0), k, i;
+	var o = { bar: true, spiral: true, ramp: 1 };
+	var e0 = new Float64Array(N);
+	for (i = 0; i < N; i++)
+		e0[i] = Galaxy.jacobi1(A.x[i], A.y[i], A.z[i], A.vx[i], A.vy[i], A.vz[i], A.t, P, P.bar.om, o);
 	for (k = 0; k < Math.round(T / 0.01); k++) Galaxy.step(A, P, 0.01, true, true);
 	for (k = 0; k < Math.round(T / 0.005); k++) Galaxy.step(B, P, 0.005, true, true);
+	if (P.bar.om === P.spiral.om) {
+		var dd = [];
+		for (i = 0; i < N; i++) {
+			var e1 = Galaxy.jacobi1(A.x[i], A.y[i], A.z[i], A.vx[i], A.vy[i], A.vz[i], A.t, P, P.bar.om, o);
+			dd.push(Math.abs(e1 - e0[i]) / Math.max(Math.abs(e0[i]), 0.3));
+		}
+		dd.sort(function(a, b) { return a - b; });
+		console.log('combined EJ: p99|dEJ|/|EJ|=' + dd[990].toExponential(2) + ' max=' + dd[N - 1].toExponential(2));
+		if (dd[990] > 2e-3) L.fail('combined EJ p99 ' + dd[990].toExponential(2) + ' > 2e-3');
+		if (dd[N - 1] > 1e-2) L.fail('combined EJ max ' + dd[N - 1].toExponential(2) + ' > 1e-2');
+	}
 	var d = [];
 	for (i = 0; i < N; i++) {
 		var dx = A.x[i] - B.x[i], dy = A.y[i] - B.y[i], dz = A.z[i] - B.z[i];

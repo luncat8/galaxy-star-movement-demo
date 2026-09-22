@@ -70,9 +70,9 @@
 		</div>
 		<h2>Field</h2>
 		<div class="row"><label>bar Ab</label><input id="s-ab" type="range" min="0" max="0.15" step="0.005" value="0.06"><output id="o-ab"></output></div>
-		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.02"><output id="o-as"></output></div>
+		<div class="row"><label>spiral As</label><input id="s-as" type="range" min="0" max="0.06" step="0.002" value="0.035"><output id="o-as"></output></div>
 		<div class="row"><label>bar Ωb</label><input id="s-ob" type="range" min="0.2" max="0.6" step="0.01" value="0.4"><output id="o-ob"></output></div>
-		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.4" step="0.01" value="0.25"><output id="o-os"></output></div>
+		<div class="row"><label>spiral Ωs</label><input id="s-os" type="range" min="0.1" max="0.5" step="0.01" value="0.40"><output id="o-os"></output></div>
 		<h2>Friction (teaching)</h2>
 		<div class="row"><label>drag η</label><input id="s-eta" type="range" min="0" max="0.1" step="0.005" value="0.05"><output id="o-eta"></output></div>
 		<div class="row"><label>diffus σ</label><input id="s-sig" type="range" min="0" max="0.2" step="0.01" value="0.1"><output id="o-sig"></output></div>
@@ -94,8 +94,10 @@
 			<summary>ⓘ approach</summary>
 			<p>Every star feels one fixed “field”: the galaxy's gravitational potential, built
 			from smooth components (thin + thick disk, bulge, halo) plus two rigidly rotating
-			m=2 waves — a bar and a logarithmic spiral. Stars are integrated on their own
-			orbits with a symplectic leapfrog; there are no star–star forces and no friction.</p>
+			m=2 waves — a bar and a logarithmic spiral, corotating at one pattern speed so the
+			response never beats (detune Ωs and watch beating wash the arms out). Stars are
+			integrated on their own orbits with a symplectic leapfrog; there are no star–star
+			forces and no friction.</p>
 			<p>The spiral arms are not material — they are the rotating crests of the field
 			where stars bunch up as they pass, so the pattern never winds up while each star
 			streams through it. The bar works the same way: inside corotation its field
@@ -147,12 +149,12 @@ var rings = null, ringDefs = [];
 function refreshRings() {
 	rings = Galaxy.resonances(P);
 	ringDefs = [
-		[rings.bar.ilr, '#ff6b6b', 'bILR', null],
-		[rings.bar.cr, '#51f08a', 'bCR', null],
-		[rings.bar.olr, '#6bb8ff', 'bOLR', null],
-		[rings.spiral.ilr, '#ff6b6b', 'sILR', [4, 3]],
-		[rings.spiral.cr, '#51f08a', 'sCR', [4, 3]],
-		[rings.spiral.olr, '#6bb8ff', 'sOLR', [4, 3]]
+		[rings.bar.ilr, '#ff6b6b', 'bILR', null, 0],
+		[rings.bar.cr, '#51f08a', 'bCR', null, 0],
+		[rings.bar.olr, '#6bb8ff', 'bOLR', null, 0],
+		[rings.spiral.ilr, '#ff6b6b', 'sILR', [4, 3], 30],
+		[rings.spiral.cr, '#51f08a', 'sCR', [4, 3], 30],
+		[rings.spiral.olr, '#6bb8ff', 'sOLR', [4, 3], 30]
 	];
 }
 var settleLeft = 0;
@@ -226,8 +228,9 @@ function snapEJ() {
 }
 
 function ejOm() {
-	if (ui.bar && !ui.spiral) return P.bar.om;
-	if (ui.spiral && !ui.bar) return P.spiral.om;
+	if (ui.bar && ui.spiral) return P.bar.om === P.spiral.om ? P.bar.om : null;
+	if (ui.bar) return P.bar.om;
+	if (ui.spiral) return P.spiral.om;
 	return null;
 }
 
@@ -352,7 +355,7 @@ function drawRings(ct) {
 			ctx.beginPath();
 			ctx.ellipse(CX, CY, r * SC, Math.max(1, r * SC * ct), 0, 0, 6.2832);
 			ctx.stroke();
-			ctx.fillText(ringDefs[d][2], CX + r * SC * 0.71, CY - r * SC * ct * 0.71 - 3);
+			ctx.fillText(ringDefs[d][2], CX + r * SC * 0.71 + ringDefs[d][4], CY - r * SC * ct * 0.71 - 3);
 		}
 	}
 	ctx.setLineDash([]);
@@ -511,8 +514,8 @@ function init() {
 	bindSlider('s-tilt', function(v) { ui.tilt = v * Math.PI / 180; return v.toFixed(0) + '°'; });
 	bindSlider('s-ab', function(v) { P.bar.ab = v; return v.toFixed(3); });
 	bindSlider('s-as', function(v) { P.spiral.as = v; return v.toFixed(3); });
-	bindSlider('s-ob', function(v) { P.bar.om = v; refreshRings(); return v.toFixed(2); });
-	bindSlider('s-os', function(v) { P.spiral.om = v; refreshRings(); return v.toFixed(2); });
+	bindSlider('s-ob', function(v) { P.bar.om = v; refreshRings(); snapEJ(); return v.toFixed(2); });
+	bindSlider('s-os', function(v) { P.spiral.om = v; refreshRings(); snapEJ(); return v.toFixed(2); });
 	bindSlider('s-eta', function(v) { ui.eta = v; return v.toFixed(3); });
 	bindSlider('s-sig', function(v) { ui.sig = v; return v.toFixed(2); });
 	bindCheck('c-bar', 'bar', snapEJ);

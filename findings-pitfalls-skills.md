@@ -83,7 +83,47 @@ always check T=300, not just T=100, before accepting an amplitude.
 - cos2φ/sin2φ algebraically from x, y — never atan2 per star.
 - Result: 10k × 10 substeps ≈ 15 ms/frame in node; default N=4k for 60 fps headroom.
 
-## 10. Tooling: never issue parallel edits to the same file
+## 10. Isotropic dispersions make half the bulge/halo retrograde — fold vφ
+
+Sampling vx, vy, vz as independent Gaussians puts ~50% of bulge/halo stars on
+Lz<0 orbits: visibly wrong, a fifth of the galaxy counter-rotating. Fix: convert
+to cylindrical at the star's position and take |vφ| (`foldPrograde`). |v|² is
+unchanged so the energy DF — and hence equilibrium — is untouched; only Lz folds.
+A few % flip back later by real resonant torque; that is physical, not a bug.
+Gated by `check-ics` (<1% retrograde at init).
+
+## 11. Two pattern speeds beat and kill structures — corotate the pair
+
+Bar at Ωb + spiral at Ωs makes the stellar response beat at 2(Ωb−Ωs) (measured
+bar amplitude swinging 0.04↔0.26 every ~20 tu) and grinds the disk via overlapping
+resonances (bar OLR sat exactly on spiral CR). Setting Ωs = Ωb (bar-driven spiral)
+makes the field static in one frame: response steady, heating saturates low
+(σR ≈ 0.20 vs 0.27), EJ conserved again, corot view freezes both patterns. The Ωs
+slider stays as a beating experiment. Lesson: with test particles, one pattern
+speed is not a simplification, it is the stability mechanism.
+
+## 12. Wide-annulus m=2 amplitude lies across corotation
+
+Response phase jumps across CR, so averaging exp(2iψ) over R = 2–4 partially
+cancels and fakes a slow decay (0.25→0.09) while local arm contrast stays ~1.2
+forever. Always measure response in narrow annuli (or ψ-binned contrast at fixed
+R). `check-response` gates narrow-annulus amplitude + contrast, never wide.
+
+## 13. Cold disks + ramped patterns = violent transient → heat 4× in settle
+
+A σR=0.07 disk hit by a 15-tu ramp rings coherently, then phase-mixes to σR≈0.28.
+Cure: start warmer (σR=0.12 — near the driven equilibrium ≈0.20, so the transient
+is gentle) + slower ramp (tramp=20). Longer ramps do NOT remove libration bunching
+(separatrix periods diverge), so expect mild post-settle relaxation and gate the
+steady value, not the peak.
+
+## 14. Jacobi max-gates are hostage to single plunging orbits
+
+One dead-center halo plunge (rmin≈0.00) takes a bounded 1e-3 EJ kick while the
+median sits at 2e-6. Gate p99 < 2e-3 + max < 1e-2 instead of max < 2e-3: tests the
+integrator, not the luck of the random draw.
+
+## 15. Tooling: never issue parallel edits to the same file
 
 Two `edit_file` calls to one file in a single block race: one edit's content is
 silently lost and stray duplicated lines (`rts) module.exports…`) can appear.

@@ -13,11 +13,11 @@ function defaultParams() {
 		bulge: { mb: 0.20, s: 0.20 },
 		halo: { vh2: 0.536, rc: 0.50 },
 		bar: { ab: 0.060, rb: 1.20, hb: 0.30, om: 0.40 },
-		spiral: { as: 0.020, rp: 2.50, sig: 0.70, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.25 },
+		spiral: { as: 0.035, rp: 2.80, sig: 0.50, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.40 },
 		rmin: 0.02,
 		vmax: 3.0,
-		tramp: 15,
-		tsettle: 25,
+		tramp: 20,
+		tsettle: 30,
 		dtSettle: 0.02,
 		seed: 1234567
 	};
@@ -407,6 +407,18 @@ function classFor(i) {
 	return 4;
 }
 
+/* Fold v_phi to prograde: isotropic dispersions put half the stars on retrograde
+ * orbits; flipping the sign keeps |v| (hence energy) unchanged while giving the
+ * component net rotation like real bulges/haloes. */
+function foldPrograde(st, i) {
+	var x = st.x[i], y = st.y[i], R = Math.sqrt(x * x + y * y);
+	if (R < 1e-6) return;
+	var vR = (x * st.vx[i] + y * st.vy[i]) / R;
+	var vp = Math.abs((x * st.vy[i] - y * st.vx[i]) / R);
+	st.vx[i] = vR * x / R - vp * y / R;
+	st.vy[i] = vR * y / R + vp * x / R;
+}
+
 function initStars(st, P, seed) {
 	var rng = RNG(seed === undefined ? P.seed : seed);
 	var tabThin = buildDiskTable(1.0, 0.05, 6, 1024);
@@ -421,10 +433,10 @@ function initStars(st, P, seed) {
 			R = sampleDisk(thick ? tabThick : tabThin, rng.next());
 			phi = 6.283185307179586 * rng.next();
 			cf = Math.cos(phi); sf = Math.sin(phi);
-			vp = vc(R, P) + (thick ? 0.20 : 0.10) * rng.gauss();
-			vR = (thick ? 0.15 : 0.07) * rng.gauss();
-			zz = (thick ? 0.15 * R : 0.05) * rng.gauss();
-			vvz = (thick ? 0.12 : 0.05) * rng.gauss();
+			vp = vc(R, P) + (thick ? 0.20 : 0.14) * rng.gauss();
+			vR = (thick ? 0.15 : 0.12) * rng.gauss();
+			zz = (thick ? 0.15 * R : 0.06) * rng.gauss();
+			vvz = (thick ? 0.12 : 0.07) * rng.gauss();
 			st.x[i] = R * cf; st.y[i] = R * sf; st.z[i] = zz;
 			st.vx[i] = vR * cf - vp * sf;
 			st.vy[i] = vR * sf + vp * cf;
@@ -440,6 +452,7 @@ function initStars(st, P, seed) {
 			st.vx[i] = 0.55 * rng.gauss();
 			st.vy[i] = 0.55 * rng.gauss();
 			st.vz[i] = 0.55 * rng.gauss();
+			foldPrograde(st, i);
 		} else if (c === 3) {
 			/* r^-1.5 number profile over [0.8, 7]: near-equilibrium, no post-settle sag. */
 			var uh = rng.next(), ih = uh * (0.3780 - 1.1180) + 1.1180;
@@ -452,6 +465,7 @@ function initStars(st, P, seed) {
 			st.vx[i] = 0.50 * rng.gauss();
 			st.vy[i] = 0.50 * rng.gauss();
 			st.vz[i] = 0.50 * rng.gauss();
+			foldPrograde(st, i);
 		} else {
 			st.x[i] = s0x + 0.03 * rng.gauss();
 			st.y[i] = s0y + 0.03 * rng.gauss();
