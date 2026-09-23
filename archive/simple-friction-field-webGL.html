@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Density Waves — Spiral Arms Without Gravity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050208;
+    --fg: #f5f0ff;
+    --muted: #8a7da5;
+    --muted-dim: #5a4d75;
+    --accent: #ff7ba8;
+    --accent2: #6bd5ff;
+    --accent3: #ffd870;
+    --glass: rgba(20, 10, 35, 0.55);
+    --border: rgba(255, 255, 255, 0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  body.dragging { cursor: grabbing; }
+  #sky {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+  }
+  .hud { position: fixed; pointer-events: none; z-index: 10; }
+  .hud > * { pointer-events: auto; }
+  .hud-top-left { top: 22px; left: 22px; max-width: 330px; }
+  .hud-top-right { top: 22px; right: 22px; text-align: right; }
+  .hud-bottom {
+    bottom: 22px; left: 50%; transform: translateX(-50%);
+    text-align: center; color: var(--muted-dim);
+    font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .panel {
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(120%);
+    -webkit-backdrop-filter: blur(20px) saturate(120%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.6);
+  }
+  .title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 26px;
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #fff 0%, #ffd870 35%, #ff7ba8 65%, #6bd5ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 9px; color: var(--muted);
+    letter-spacing: 0.22em; text-transform: uppercase;
+    margin-bottom: 16px; line-height: 1.4;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 16px;
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.04);
+  }
+  .stat-label { color: var(--muted); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; }
+  .stat-value { color: var(--fg); font-weight: 500; font-feature-settings: 'tnum'; }
+  .controls { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .control-row { display: flex; flex-direction: column; gap: 6px; }
+  .control-label {
+    font-size: 9px; color: var(--muted);
+    letter-spacing: 0.18em; text-transform: uppercase;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .control-value { color: var(--fg); font-weight: 500; }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px; outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    background: linear-gradient(135deg, #ff7ba8, #ffd870);
+    border-radius: 50%; cursor: pointer;
+    box-shadow: 0 0 12px rgba(255, 123, 168, 0.5);
+    border: none;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px;
+    background: linear-gradient(135deg, #ff7ba8, #ffd870);
+    border-radius: 50%; cursor: pointer; border: none;
+  }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    flex: 1;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 8px 8px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.06); color: var(--fg); }
+  .btn.active {
+    background: rgba(107, 213, 255, 0.12);
+    border-color: rgba(107, 213, 255, 0.4);
+    color: var(--accent2);
+    box-shadow: 0 0 16px rgba(107, 213, 255, 0.2);
+  }
+  .legend {
+    display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(120%);
+    -webkit-backdrop-filter: blur(20px) saturate(120%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .legend-item .ldot { width: 6px; height: 6px; border-radius: 50%; }
+  .legend-item .count {
+    color: var(--fg); font-weight: 500;
+    min-width: 60px; text-align: right;
+    font-feature-settings: 'tnum';
+  }
+  .legend-item.disk .ldot { background: #b4c8ff; box-shadow: 0 0 8px #b4c8ff; }
+  .legend-item.arm .ldot { background: #ff7ba8; box-shadow: 0 0 8px #ff7ba8; }
+  .legend-item.bulge .ldot { background: #ffd870; box-shadow: 0 0 8px #ffd870; }
+  #glfail {
+    position: fixed; inset: 0; z-index: 100;
+    display: none; align-items: center; justify-content: center;
+  }
+  #glfail .panel { max-width: 460px; text-align: center; font-size: 12px; line-height: 1.8; color: var(--muted); }
+  #glfail .panel b { color: var(--fg); letter-spacing: 0.1em; }
+  @media (max-width: 720px) {
+    .hud-top-left { max-width: calc(100% - 24px); top: 12px; left: 12px; }
+    .hud-top-right { top: auto; bottom: 12px; right: 12px; }
+    .title { font-size: 20px; }
+    .hud-bottom { display: none; }
+    .panel { padding: 14px 16px; }
+    .stats { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="sky"></canvas>
+
+  <div class="hud hud-top-left">
+    <div class="panel">
+      <div class="title">Density Waves</div>
+      <div class="subtitle">Slow-field damping · Spiral arms without gravity · WebGL</div>
+
+      <div class="stats">
+        <div class="stat"><span class="stat-label">Stars</span><span class="stat-value" id="stat-stars">—</span></div>
+        <div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="stat-fps">—</span></div>
+        <div class="stat"><span class="stat-label">Pattern Ω</span><span class="stat-value" id="stat-omega">0.15</span></div>
+        <div class="stat"><span class="stat-label">Pitch</span><span class="stat-value" id="stat-pitch">15°</span></div>
+      </div>
+
+      <div class="controls">
+        <div class="control-row">
+          <div class="control-label">
+            <span>Time Flow</span>
+            <span class="control-value" id="speed-val">1.00×</span>
+          </div>
+          <input type="range" id="speed" min="0" max="500" value="100">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Damping Strength</span>
+            <span class="control-value" id="damp-val">0.70</span>
+          </div>
+          <input type=range id="damp" min="0" max="90" value="70">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Orbit Eccentricity</span>
+            <span class="control-value" id="ecc-val">0.20</span>
+          </div>
+          <input type=range id="ecc" min="0" max="60" value="20">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Pattern Speed</span>
+            <span class="control-value" id="omega-val">0.15</span>
+          </div>
+          <input type=range id="omega" min="0" max="80" value="15">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Pitch Angle</span>
+            <span class="control-value" id="pitch-val">15°</span>
+          </div>
+          <input type=range id="pitch" min="5" max="35" value="15">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Spiral Arms</span>
+            <span class="control-value" id="arms-val">2</span>
+          </div>
+          <input type=range id="arms" min="1" max="5" value="2">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label"><span>Visualize</span></div>
+          <div class="btn-row">
+            <button class="btn" id="btn-field">Slow Field</button>
+            <button class="btn" id="btn-trails">Trails</button>
+            <button class="btn" id="btn-reset">Reset View</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hud hud-top-right">
+    <div class="legend">
+      <div class="legend-item disk"><span>Disk Stars</span><span class="count" id="cnt-disk">—</span></div>
+      <div class="legend-item arm"><span>Arm Jam</span><span class="count" id="cnt-arm">—</span></div>
+      <div class="legend-item bulge"><span>Bulge</span><span class="count" id="cnt-bulge">—</span></div>
+    </div>
+  </div>
+
+  <div class="hud hud-bottom">
+    Drag to rotate · Scroll to zoom · Slow zones create traffic jams of stars
+  </div>
+
+  <div id="glfail">
+    <div class="panel">
+      <b>WEBGL UNAVAILABLE</b><br>
+      This simulation renders through WebGL. Your browser or device
+      blocked context creation. Enable hardware acceleration and reload.
+    </div>
+  </div>
+
+  <script>
+  'use strict';
+
+  /* ============================================================
+     DENSITY WAVES — WebGL port
+     - Physics (density-wave damping + per-star eccentric orbits)
+       stays on the CPU, derived from the Canvas2D original.
+     - All rendering moved to the GPU: procedural point sprites,
+       shader-based 3D projection, additive blending.
+     - Trails use a ping-pong framebuffer pair (WebGL cannot fade
+       the default framebuffer like Canvas2D's source-over fill).
+     - "Slow Field" spiral curves are drawn as dense additive dots
+       along log-spiral arcs (gl.lineWidth is capped at 1 in ES).
+     ============================================================ */
+
+  const TAU = Math.PI * 2;
+  const canvas = document.getElementById('sky');
+
+  const CONTEXT_OPTS = {
+    alpha: false, depth: false, stencil: false, antialias: false,
+    preserveDrawingBuffer: false, powerPreference: 'high-performance'
+  };
+  const gl = canvas.getContext('webgl2', CONTEXT_OPTS)
+          || canvas.getContext('webgl', CONTEXT_OPTS)
+          || canvas.getContext('experimental-webgl', CONTEXT_OPTS);
+  if (!gl) {
+    document.getElementById('glfail').style.display = 'flex';
+    throw new Error('WebGL not supported');
+  }
+
+  // ======== STAR COUNTS (GPU leaves plenty of headroom — raise freely) ========
+  const N_DISK = 15000;
+  const N_BULGE = 4000;
+  const FIELD_SAMPLES = 1500;
+  const CAM_DIST = 12;
+  const V0 = 1.8;           // flat rotation-curve speed
+
+  // ======== PER-STAR ARRAYS (physics state, CPU-side) ========
+  const r_arr = new Float32Array(N_DISK);        // mean orbit radius
+  const theta_arr = new Float32Array(N_DISK);
+  const z_amp_arr = new Float32Array(N_DISK);
+  const z_phase_arr = new Float32Array(N_DISK);
+  const brightness_arr = new Float32Array(N_DISK);
+  const ecc_u_arr = new Float32Array(N_DISK);    // per-star eccentricity seed 0..1
+  const peri_arr = new Float32Array(N_DISK);     // per-star periapsis angle
+
+  const bulge_r = new Float32Array(N_BULGE);     // mean orbit radius
+  const bulge_theta = new Float32Array(N_BULGE);
+  const bulge_node = new Float32Array(N_BULGE);
+  const bulge_incl = new Float32Array(N_BULGE);
+  const bulge_ecc_u = new Float32Array(N_BULGE); // per-star eccentricity seed 0..1
+  const bulge_peri = new Float32Array(N_BULGE);  // per-star periapsis angle
+
+  function init() {
+    for (let i = 0; i < N_DISK; i++) {
+      const r = 0.2 + Math.pow(Math.random(), 0.6) * 6.5;
+      r_arr[i] = r;
+      theta_arr[i] = Math.random() * TAU;
+      z_amp_arr[i] = (0.05 + 0.35 * Math.random()) * Math.exp(-r * 0.1);
+      z_phase_arr[i] = Math.random() * TAU;
+      brightness_arr[i] = 0.4 + 0.6 * Math.random();
+      ecc_u_arr[i] = Math.random();
+      peri_arr[i] = Math.random() * TAU;
+    }
+    for (let i = 0; i < N_BULGE; i++) {
+      bulge_r[i] = 0.1 + Math.pow(Math.random(), 2.0) * 0.8;
+      bulge_theta[i] = Math.random() * TAU;
+      bulge_node[i] = Math.random() * TAU;
+      bulge_incl[i] = Math.acos(2 * Math.random() - 1);
+      bulge_ecc_u[i] = Math.random();
+      bulge_peri[i] = Math.random() * TAU;
+    }
+  }
+  init();
+
+  // GPU-packed static per-star attributes (uploaded once)
+  const diskStatic = new Float32Array(N_DISK * 6);   // r0, eccU, peri, brightness, zAmp, zPhase
+  const bulgeStatic = new Float32Array(N_BULGE * 5); // r0, eccU, peri, node, incl
+  for (let i = 0; i < N_DISK; i++) {
+    diskStatic[i * 6]     = r_arr[i];
+    diskStatic[i * 6 + 1] = ecc_u_arr[i];
+    diskStatic[i * 6 + 2] = peri_arr[i];
+    diskStatic[i * 6 + 3] = brightness_arr[i];
+    diskStatic[i * 6 + 4] = z_amp_arr[i];
+    diskStatic[i * 6 + 5] = z_phase_arr[i];
+  }
+  for (let i = 0; i < N_BULGE; i++) {
+    bulgeStatic[i * 5]     = bulge_r[i];
+    bulgeStatic[i * 5 + 1] = bulge_ecc_u[i];
+    bulgeStatic[i * 5 + 2] = bulge_peri[i];
+    bulgeStatic[i * 5 + 3] = bulge_node[i];
+    bulgeStatic[i * 5 + 4] = bulge_incl[i];
+  }
+  const fieldT = new Float32Array(FIELD_SAMPLES);    // 0..1 param along each spiral arc
+  for (let i = 0; i < FIELD_SAMPLES; i++) fieldT[i] = i / (FIELD_SAMPLES - 1);
+
+  // ======== STATE ========
+  let speed = 1.0;
+  let damping_strength = 0.70;
+  let ecc_max = 0.20;      // max orbital eccentricity (radial excursion ±ecc_max)
+  let Omega_p = 0.15;
+  let pitch_deg = 15;
+  let num_arms = 2;
+  let arm_offset = TAU / num_arms;
+
+  let pattern_phase = 0;   // accumulated pattern phase (no jumps when Omega_p changes)
+  let armCount = 0;
+
+  let showField = false;
+  let showTrails = false;
+
+  let rotZ = 0;
+  let tilt = 1.2;
+  let zoom = 1.0;
+  let tRotZ = rotZ, tTilt = tilt, tZoom = zoom;
+
+  let isDragging = false;
+  let lastX = 0, lastY = 0;
+
+  // ======== SHADERS (GLSL ES 1.00 — runs on WebGL1 and WebGL2) ========
+
+  const VS_QUAD = `
+    attribute vec2 aQuad;
+    varying vec2 vUV;
+    void main() {
+      vUV = aQuad * 0.5 + 0.5;
+      gl_Position = vec4(aQuad, 0.0, 1.0);
+    }`;
+
+  const FS_BG = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform vec2 uResolution;
+    uniform float uGlowR;
+    uniform float uMode;      // 0 = background gradient, 1 = trails fade
+    uniform sampler2D uPrev;
+    uniform float uFade;
+    void main() {
+      vec3 col;
+      if (uMode < 0.5) {
+        vec2 pix = vUV * uResolution;
+        vec2 c = uResolution * 0.5;
+        float d1 = length(pix - c) / max(max(uResolution.x, uResolution.y), 1.0);
+        vec3 bg = mix(vec3(0.03922, 0.01961, 0.07059), vec3(0.00784, 0.00392, 0.03137), clamp(d1, 0.0, 1.0));
+        float d2 = length(pix - c) / max(uGlowR, 1.0);
+        vec3 gcol = vec3(0.0);
+        float ga = 0.0;
+        if (d2 < 0.3) {
+          float t = d2 / 0.3;
+          gcol = mix(vec3(1.0, 0.86275, 0.58824), vec3(1.0, 0.58824, 0.39216), t);
+          ga = mix(0.5, 0.15, t);
+        } else if (d2 < 1.0) {
+          float t = (d2 - 0.3) / 0.7;
+          gcol = mix(vec3(1.0, 0.58824, 0.39216), vec3(1.0, 0.39216, 0.19608), t);
+          ga = 0.15 * (1.0 - t);
+        }
+        col = gcol * ga + bg * (1.0 - ga);
+      } else {
+        vec3 prev = texture2D(uPrev, vUV).rgb;
+        col = prev * uFade + vec3(0.01961, 0.00784, 0.03137) * (1.0 - uFade);
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }`;
+
+  const FS_PRESENT = `
+    precision mediump float;
+    varying vec2 vUV;
+    uniform sampler2D uTex;
+    void main() {
+      gl_FragColor = vec4(texture2D(uTex, vUV).rgb, 1.0);
+    }`;
+
+  // Soft radial sprite matching the Canvas2D radial-gradient sprite
+  const FS_POINT = `
+    precision mediump float;
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      vec2 uv = gl_PointCoord * 2.0 - 1.0;
+      float r2 = dot(uv, uv);
+      if (r2 > 1.0) discard;
+      float r = sqrt(r2);
+      float a = (r < 0.5) ? mix(1.0, 0.4, r * 2.0) : mix(0.4, 0.0, r * 2.0 - 1.0);
+      gl_FragColor = vec4(vColor * (vAlpha * a), 1.0);
+    }`;
+
+  // Disk star: eccentric orbit + density-wave tint computed entirely on GPU.
+  // Orbit: rho = r0 * (1 + eccMax * u * cos(theta - peri)) — a fixed closed curve
+  // with radial excursion up to ±eccMax, random orientation per star.
+  const VS_DISK = `
+    precision highp float;
+    attribute float aTheta;
+    attribute vec4 aA;        // mean radius r0, ecc seed 0..1, periapsis angle, brightness
+    attribute vec2 aB;        // zAmp, zPhase
+    uniform float uCosR, uSinR, uCosT, uSinT;
+    uniform float uScale, uHalfW, uHalfH, uCamDist;
+    uniform float uTanPitch, uPatternPhase, uArmOffset, uInv2Sig2, uEccMax;
+    uniform float uPointSize;
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      float th = aTheta;
+      float rho = aA.x * (1.0 + uEccMax * aA.y * cos(th - aA.z));
+      float px = rho * cos(th);
+      float py = rho * sin(th);
+      float pz = aB.x * sin(2.0 * th + aB.y);
+      float rx = px * uCosR - py * uSinR;
+      float ry = px * uSinR + py * uCosR;
+      float pjy = ry * uCosT - pz * uSinT;
+      float pjz = ry * uSinT + pz * uCosT;
+      float ps = uCamDist / (uCamDist + pjz);
+      vec2 screen = vec2(rx, pjy) * (uScale * ps);
+      gl_Position = vec4(screen.x / uHalfW, -screen.y / uHalfH, 0.0, 1.0);
+      gl_PointSize = uPointSize;
+      float dth = mod(th - (log(rho) / uTanPitch + uPatternPhase), uArmOffset);
+      if (dth > uArmOffset * 0.5) dth -= uArmOffset;
+      float D = exp(-dth * dth * uInv2Sig2);
+      float b = aA.w * (0.4 + ps * 0.6);
+      float arm = step(0.4, D);
+      vColor = mix(vec3(0.70588, 0.82353, 1.0), vec3(1.0, 0.54902, 0.78431), arm);
+      vAlpha = mix((1.0 - D) * b * 0.8, D * b, arm);
+    }`;
+
+  // Bulge star: tilted eccentric orbits, per-star node + inclination
+  const VS_BULGE = `
+    precision highp float;
+    attribute float aTheta;
+    attribute vec3 aA;        // mean radius r0, ecc seed 0..1, periapsis angle
+    attribute vec2 aB;        // node, incl
+    uniform float uCosR, uSinR, uCosT, uSinT;
+    uniform float uScale, uHalfW, uHalfH, uCamDist, uPointSize, uEccMax;
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      float th = aTheta;
+      float rho = aA.x * (1.0 + uEccMax * aA.y * cos(th - aA.z));
+      float x0 = rho * cos(th);
+      float y0 = rho * sin(th);
+      float cO = cos(aB.x), sO = sin(aB.x);
+      float x1 = x0 * cO - y0 * sO;
+      float y1 = x0 * sO + y0 * cO;
+      float cI = cos(aB.y), sI = sin(aB.y);
+      float px = x1;
+      float py = y1 * cI;
+      float pz = y1 * sI;
+      float rx = px * uCosR - py * uSinR;
+      float ry = px * uSinR + py * uCosR;
+      float pjy = ry * uCosT - pz * uSinT;
+      float pjz = ry * uSinT + pz * uCosT;
+      float ps = uCamDist / (uCamDist + pjz);
+      vec2 screen = vec2(rx, pjy) * (uScale * ps);
+      gl_Position = vec4(screen.x / uHalfW, -screen.y / uHalfH, 0.0, 1.0);
+      gl_PointSize = uPointSize;
+      vColor = vec3(1.0, 0.78431, 0.39216);
+      vAlpha = 0.8 * ps;
+    }`;
+
+  // Slow-field visualization: log-spiral arcs rendered as soft additive dots
+  const VS_FIELD = `
+    precision highp float;
+    attribute float aT;
+    uniform float uCosR, uSinR, uCosT, uSinT;
+    uniform float uScale, uHalfW, uHalfH, uCamDist;
+    uniform float uTanPitch, uPatternPhase, uArmPhase, uThetaOff;
+    uniform float uAlpha, uPointSize, uR0, uR1;
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      float r = mix(uR0, uR1, aT);
+      float bt = log(r) / uTanPitch + uPatternPhase + uArmPhase + uThetaOff;
+      float px = r * cos(bt);
+      float py = r * sin(bt);
+      float rx = px * uCosR - py * uSinR;
+      float ry = px * uSinR + py * uCosR;
+      float pjy = ry * uCosT;
+      float pjz = ry * uSinT;
+      float ps = uCamDist / (uCamDist + pjz);
+      vec2 screen = vec2(rx, pjy) * (uScale * ps);
+      gl_Position = vec4(screen.x / uHalfW, -screen.y / uHalfH, 0.0, 1.0);
+      gl_PointSize = uPointSize;
+      float edge = smoothstep(0.0, 0.02, aT) * (1.0 - smoothstep(0.96, 1.0, aT));
+      vColor = vec3(1.0, 0.31373, 0.58824);
+      vAlpha = uAlpha * edge;
+    }`;
+
+  const FS_FIELD = `
+    precision mediump float;
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      vec2 uv = gl_PointCoord * 2.0 - 1.0;
+      float r2 = dot(uv, uv);
+      if (r2 > 1.0) discard;
+      float fall = exp(-r2 * 4.0);
+      gl_FragColor = vec4(vColor * (vAlpha * fall), 1.0);
+    }`;
+
+  // ======== GL HELPERS ========
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error('Shader compile error: ' + gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+
+  function makeProgram(vsSrc, fsSrc) {
+    const p = gl.createProgram();
+    const vs = compile(gl.VERTEX_SHADER, vsSrc);
+    const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      throw new Error('Program link error: ' + gl.getProgramInfoLog(p));
+    }
+    const u = {}, a = {};
+    const nu = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < nu; i++) {
+      const info = gl.getActiveUniform(p, i);
+      u[info.name] = gl.getUniformLocation(p, info.name);
+    }
+    const na = gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES);
+    for (let i = 0; i < na; i++) {
+      const info = gl.getActiveAttrib(p, i);
+      a[info.name] = gl.getAttribLocation(p, info.name);
+    }
+    return { p, u, a };
+  }
+
+  const enabledAttribs = new Set();
+  function useAttribs(prog, bindings) {
+    const used = new Set();
+    for (const name in bindings) {
+      const loc = prog.a[name];
+      if (loc === undefined || loc < 0) continue;
+      const size = bindings[name][0], buf = bindings[name][1];
+      const stride = bindings[name][2] || 0, offs = bindings[name][3] || 0;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, offs);
+      used.add(loc);
+    }
+    for (const loc of Array.from(enabledAttribs)) {
+      if (!used.has(loc)) {
+        gl.disableVertexAttribArray(loc);
+        enabledAttribs.delete(loc);
+      }
+    }
+  }
+
+  // ======== GL OBJECTS ========
+  let progDisk, progBulge, progField, progBg, progPresent;
+  let quadBuf, diskStaticBuf, diskThetaBuf, bulgeStaticBuf, bulgeThetaBuf, fieldTBuf;
+  const fbo = [null, null], fboTex = [null, null];
+  let cur = 0;
+  let W = 0, H = 0, DPR = 1, fw = 0, fh = 0;
+  let glLost = false;
+
+  function initGL() {
+    progDisk = makeProgram(VS_DISK, FS_POINT);
+    progBulge = makeProgram(VS_BULGE, FS_POINT);
+    progField = makeProgram(VS_FIELD, FS_FIELD);
+    progBg = makeProgram(VS_QUAD, FS_BG);
+    progPresent = makeProgram(VS_QUAD, FS_PRESENT);
+
+    quadBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+    diskStaticBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, diskStaticBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, diskStatic, gl.STATIC_DRAW);
+
+    diskThetaBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, diskThetaBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, theta_arr, gl.DYNAMIC_DRAW);
+
+    bulgeStaticBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bulgeStaticBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, bulgeStatic, gl.STATIC_DRAW);
+
+    bulgeThetaBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bulgeThetaBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, bulge_theta, gl.DYNAMIC_DRAW);
+
+    fieldTBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, fieldTBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, fieldT, gl.STATIC_DRAW);
+  }
+  initGL();
+
+  function createTargets() {
+    for (let i = 0; i < 2; i++) {
+      if (fboTex[i]) gl.deleteTexture(fboTex[i]);
+      if (fbo[i]) gl.deleteFramebuffer(fbo[i]);
+    }
+    fw = canvas.width;
+    fh = canvas.height;
+    for (let i = 0; i < 2; i++) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fw, fh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      fboTex[i] = t;
+      fbo[i] = fb;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    cur = 0;
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.max(1, Math.round(W * DPR));
+    canvas.height = Math.max(1, Math.round(H * DPR));
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    createTargets();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); glLost = true; }, false);
+  canvas.addEventListener('webglcontextrestored', () => { initGL(); resize(); glLost = false; }, false);
+
+  // ======== PHYSICS (density-wave damping + eccentric orbits) ========
+  // Each star follows its own ellipse: rho = r0 * (1 + e*cos(theta - peri))
+  // with e = ecc_max * (random 0..1) and a random periapsis angle. Angular
+  // speed follows the flat rotation curve omega = V0 / (rho + 0.2), so stars
+  // sweep faster near periapsis (Kepler-style). The path is a fixed closed curve.
+  function update(dt) {
+    const tan_pitch = Math.tan(pitch_deg * Math.PI / 180);
+    const sigma_sq2 = 0.125; // 2 * 0.25^2
+    let arm_count = 0;
+
+    for (let i = 0; i < N_DISK; i++) {
+      const th = theta_arr[i];
+      const rho = r_arr[i] * (1 + ecc_max * ecc_u_arr[i] * Math.cos(th - peri_arr[i]));
+      const base_arm = Math.log(rho) / tan_pitch + pattern_phase;
+      let delta = (th - base_arm) % arm_offset;
+      if (delta < 0) delta += arm_offset;
+      if (delta > arm_offset / 2) delta -= arm_offset;
+      const D = Math.exp(-(delta * delta) / sigma_sq2);
+      const omega = (V0 / (rho + 0.2)) * (1 - damping_strength * D);
+      let nth = th + omega * dt;
+      if (nth > TAU) nth -= TAU;
+      else if (nth < 0) nth += TAU;
+      theta_arr[i] = nth;
+      if (D > 0.4) arm_count++;
+    }
+    armCount = arm_count;
+
+    for (let i = 0; i < N_BULGE; i++) {
+      const th = bulge_theta[i];
+      const rho = bulge_r[i] * (1 + ecc_max * bulge_ecc_u[i] * Math.cos(th - bulge_peri[i]));
+      let nth = th + (1.5 / Math.max(0.2, rho)) * dt;
+      if (nth > TAU) nth -= TAU;
+      bulge_theta[i] = nth;
+    }
+  }
+
+  // ======== RENDER ========
+  function setCam(u, cosR, sinR, cosT, sinT, scalePx) {
+    gl.uniform1f(u.uCosR, cosR);
+    gl.uniform1f(u.uSinR, sinR);
+    gl.uniform1f(u.uCosT, cosT);
+    gl.uniform1f(u.uSinT, sinT);
+    gl.uniform1f(u.uScale, scalePx);
+    gl.uniform1f(u.uHalfW, fw / 2);
+    gl.uniform1f(u.uHalfH, fh / 2);
+    gl.uniform1f(u.uCamDist, CAM_DIST);
+  }
+
+  function drawField(cosR, sinR, cosT, sinT, scalePx, tan_pitch) {
+    gl.useProgram(progField.p);
+    useAttribs(progField, { aT: [1, fieldTBuf] });
+    const u = progField.u;
+    setCam(u, cosR, sinR, cosT, sinT, scalePx);
+    gl.uniform1f(u.uTanPitch, tan_pitch);
+    gl.uniform1f(u.uPatternPhase, pattern_phase);
+    gl.uniform1f(u.uR0, 0.5);
+    gl.uniform1f(u.uR1, 9.5);
+    for (let arm = 0; arm < num_arms; arm++) {
+      gl.uniform1f(u.uArmPhase, arm * arm_offset);
+      // central spiral line
+      gl.uniform1f(u.uThetaOff, 0);
+      gl.uniform1f(u.uAlpha, 0.5);
+      gl.uniform1f(u.uPointSize, 4.5 * DPR);
+      gl.drawArrays(gl.POINTS, 0, FIELD_SAMPLES);
+      // gaussian width boundaries
+      for (let off = -3; off <= 3; off++) {
+        if (off === 0) continue;
+        const to = off * 0.12;
+        gl.uniform1f(u.uThetaOff, to);
+        gl.uniform1f(u.uAlpha, Math.exp(-(to * to) / 0.125) * 0.4 * 0.5);
+        gl.uniform1f(u.uPointSize, 3.0 * DPR);
+        gl.drawArrays(gl.POINTS, 0, FIELD_SAMPLES);
+      }
+    }
+  }
+
+  function drawBulge(cosR, sinR, cosT, sinT, scalePx) {
+    gl.useProgram(progBulge.p);
+    useAttribs(progBulge, {
+      aTheta: [1, bulgeThetaBuf],
+      aA: [3, bulgeStaticBuf, 20, 0],
+      aB: [2, bulgeStaticBuf, 20, 12]
+    });
+    const u = progBulge.u;
+    setCam(u, cosR, sinR, cosT, sinT, scalePx);
+    gl.uniform1f(u.uEccMax, ecc_max);
+    gl.uniform1f(u.uPointSize, 6 * DPR);
+    gl.drawArrays(gl.POINTS, 0, N_BULGE);
+  }
+
+  function drawDisk(cosR, sinR, cosT, sinT, scalePx, tan_pitch) {
+    gl.useProgram(progDisk.p);
+    useAttribs(progDisk, {
+      aTheta: [1, diskThetaBuf],
+      aA: [4, diskStaticBuf, 24, 0],
+      aB: [2, diskStaticBuf, 24, 16]
+    });
+    const u = progDisk.u;
+    setCam(u, cosR, sinR, cosT, sinT, scalePx);
+    gl.uniform1f(u.uTanPitch, tan_pitch);
+    gl.uniform1f(u.uPatternPhase, pattern_phase);
+    gl.uniform1f(u.uArmOffset, arm_offset);
+    gl.uniform1f(u.uInv2Sig2, 8.0); // 1 / (2 * 0.25^2)
+    gl.uniform1f(u.uEccMax, ecc_max);
+    gl.uniform1f(u.uPointSize, 8 * DPR);
+    gl.drawArrays(gl.POINTS, 0, N_DISK);
+  }
+
+  function render(simDt) {
+    update(simDt);
+
+    const tan_pitch = Math.tan(pitch_deg * Math.PI / 180);
+    const scalePx = Math.min(W, H) / 14 * zoom * DPR;
+    const cosR = Math.cos(rotZ), sinR = Math.sin(rotZ);
+    const cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+
+    // upload dynamic star phases
+    gl.bindBuffer(gl.ARRAY_BUFFER, diskThetaBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, theta_arr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bulgeThetaBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, bulge_theta);
+
+    const writeFbo = fbo[cur];
+    const readTex = fboTex[1 - cur];
+
+    // --- scene pass (offscreen, so trails can persist) ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, writeFbo);
+    gl.viewport(0, 0, fw, fh);
+    gl.disable(gl.BLEND);
+
+    gl.useProgram(progBg.p);
+    useAttribs(progBg, { aQuad: [2, quadBuf] });
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, readTex);
+    gl.uniform1i(progBg.u.uPrev, 0);
+    gl.uniform2f(progBg.u.uResolution, fw, fh);
+    gl.uniform1f(progBg.u.uGlowR, Math.min(W, H) * 0.15 * zoom * DPR);
+    gl.uniform1f(progBg.u.uMode, showTrails ? 1 : 0);
+    gl.uniform1f(progBg.u.uFade, 0.85);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE); // 'lighter'
+
+    if (showField) drawField(cosR, sinR, cosT, sinT, scalePx, tan_pitch);
+    drawBulge(cosR, sinR, cosT, sinT, scalePx);
+    drawDisk(cosR, sinR, cosT, sinT, scalePx, tan_pitch);
+
+    // --- present pass ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, fw, fh);
+    gl.disable(gl.BLEND);
+    gl.useProgram(progPresent.p);
+    useAttribs(progPresent, { aQuad: [2, quadBuf] });
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fboTex[cur]);
+    gl.uniform1i(progPresent.u.uTex, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    cur = 1 - cur;
+
+    document.getElementById('cnt-arm').textContent = armCount.toLocaleString();
+  }
+
+  // ======== INTERACTION ========
+  canvas.addEventListener('pointerdown', (e) => {
+    isDragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    document.body.classList.add('dragging');
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    tRotZ -= dx * 0.005;
+    tTilt -= dy * 0.005;
+    tTilt = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, tTilt));
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    isDragging = false;
+    document.body.classList.remove('dragging');
+    canvas.releasePointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    tZoom *= e.deltaY > 0 ? 0.92 : 1.08;
+    tZoom = Math.max(0.4, Math.min(3.0, tZoom));
+  }, { passive: false });
+
+  // ======== UI HOOKUPS ========
+  const speedSlider = document.getElementById('speed');
+  const speedVal = document.getElementById('speed-val');
+  speedSlider.addEventListener('input', () => {
+    speed = parseInt(speedSlider.value) / 100;
+    speedVal.textContent = speed.toFixed(2) + '\u00d7';
+  });
+
+  const dampSlider = document.getElementById('damp');
+  const dampVal = document.getElementById('damp-val');
+  dampSlider.addEventListener('input', () => {
+    damping_strength = parseInt(dampSlider.value) / 100;
+    dampVal.textContent = damping_strength.toFixed(2);
+  });
+
+  const eccSlider = document.getElementById('ecc');
+  const eccVal = document.getElementById('ecc-val');
+  eccSlider.addEventListener('input', () => {
+    ecc_max = parseInt(eccSlider.value) / 100;
+    eccVal.textContent = ecc_max.toFixed(2);
+  });
+
+  const omegaSlider = document.getElementById('omega');
+  const omegaVal = document.getElementById('omega-val');
+  omegaSlider.addEventListener('input', () => {
+    Omega_p = parseInt(omegaSlider.value) / 100;
+    omegaVal.textContent = Omega_p.toFixed(2);
+  });
+
+  const pitchSlider = document.getElementById('pitch');
+  const pitchVal = document.getElementById('pitch-val');
+  pitchSlider.addEventListener('input', () => {
+    pitch_deg = parseInt(pitchSlider.value);
+    pitchVal.textContent = pitch_deg + '\u00b0';
+  });
+
+  const armsSlider = document.getElementById('arms');
+  const armsVal = document.getElementById('arms-val');
+  armsSlider.addEventListener('input', () => {
+    num_arms = parseInt(armsSlider.value);
+    arm_offset = TAU / num_arms;
+    armsVal.textContent = num_arms;
+  });
+
+  const btnField = document.getElementById('btn-field');
+  btnField.addEventListener('click', () => {
+    showField = !showField;
+    btnField.classList.toggle('active', showField);
+  });
+  const btnTrails = document.getElementById('btn-trails');
+  btnTrails.addEventListener('click', () => {
+    showTrails = !showTrails;
+    btnTrails.classList.toggle('active', showTrails);
+  });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    tRotZ = 0;
+    tTilt = 1.2;
+    tZoom = 1.0;
+  });
+
+  document.getElementById('stat-stars').textContent = (N_DISK + N_BULGE).toLocaleString();
+  document.getElementById('cnt-disk').textContent = N_DISK.toLocaleString();
+  document.getElementById('cnt-bulge').textContent = N_BULGE.toLocaleString();
+
+  // ======== MAIN LOOP ========
+  let lastTime = performance.now();
+  let fps = 0, frames = 0, fpsTime = 0;
+
+  function loop(now) {
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+
+    if (!glLost) {
+      rotZ += (tRotZ - rotZ) * 0.1;
+      tilt += (tTilt - tilt) * 0.1;
+      zoom += (tZoom - zoom) * 0.1;
+
+      const sim_dt = dt * speed * 0.5;
+      pattern_phase += Omega_p * sim_dt;   // accumulate pattern phase smoothly
+      if (pattern_phase > TAU) pattern_phase -= TAU;
+
+      render(sim_dt);
+
+      frames++;
+      fpsTime += dt;
+      if (fpsTime >= 0.5) {
+        fps = Math.round(frames / fpsTime);
+        frames = 0;
+        fpsTime = 0;
+        document.getElementById('stat-fps').textContent = fps;
+        document.getElementById('stat-omega').textContent = Omega_p.toFixed(2);
+        document.getElementById('stat-pitch').textContent = pitch_deg + '\u00b0';
+      }
+    }
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
