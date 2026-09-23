@@ -38,4 +38,17 @@ spread = Math.sqrt(spread / sn);
 console.log('rmax=' + rmax.toFixed(2) + ' vmax=' + vmax.toFixed(2) + ' streamSpread=' + spread.toFixed(3));
 if (rmax > 8 || vmax > 3) L.fail('ICs out of bounds');
 if (spread > 0.2) L.fail('stream not tight');
-L.pass('check-ics shares, prograde, bounds, tight stream');
+
+/* S2b: the settle-boundary seeding must be the same bounded perturbation
+ * (e(R) profile: |dR| = e*R <= 0.34). Apply the event alone and measure. */
+var px = Float64Array.from(st.x), py = Float64Array.from(st.y);
+Galaxy.alignEpicycles(st, P, P.alignSplit, 1e9);
+var dmax = 0;
+for (i = 0; i < N; i++) {
+	var dx = st.x[i] - px[i], dy = st.y[i] - py[i];
+	var d = Math.sqrt(dx * dx + dy * dy);
+	if (d > dmax) dmax = d;
+}
+console.log('S2b boundary seed: max |dR|=' + dmax.toFixed(3));
+if (dmax > 0.35) L.fail('S2b seeding displacement ' + dmax.toFixed(3));
+L.pass('check-ics shares, prograde, bounds, tight stream, S2b displacement');

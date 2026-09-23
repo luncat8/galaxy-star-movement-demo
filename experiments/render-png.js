@@ -30,6 +30,7 @@ else if (name !== 'calm') {
 	console.error('variant must be calm, align, noalign, live or live-noalign');
 	process.exit(1);
 }
+if (process.env.SPLIT !== undefined) P.alignSplit = parseFloat(process.env.SPLIT);
 P.bar.g = 0; P.spiral.g = 1;
 
 /* Framebuffer (linear, additive) + z-free planar projection. */
@@ -261,8 +262,10 @@ function snapshot(st, om, tag) {
 	coreGlow();
 	drawGlow(st, om, 0);
 	drawStars(st);
-	writePng(path.join(__dirname, 'logs', 'render-' + name + '-' + tag + '.png'), W, H, null);
+	writePng(path.join(__dirname, 'logs', 'render-' + label + '-' + tag + '.png'), W, H, null);
 }
+
+var label = name + (process.env.SPLIT !== undefined ? '-s' + process.env.SPLIT : '');
 
 var omGlow = P.spiral.om;
 var st = Galaxy.createState(N);

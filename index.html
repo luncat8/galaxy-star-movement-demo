@@ -107,11 +107,13 @@
 			where stars bunch up as they pass, so the pattern never winds up while each star
 			streams through it. The response is steadiest between the inner resonance and
 			corotation (marked rings); beyond corotation the disk reads smoother and stars
-			disperse — that outer scatter is real orbit physics, not noise. At reset the
-			warm disk is also seeded pre-aligned with the wave (each orbit's apocenter
-			following the same winding law), so full arms are visible immediately; outside
-			corotation that kinematic alignment shears away over tens of time units while
-			the wave's forcing keeps the inner arms locked. The cold young disk
+			disperse — that outer scatter is real orbit physics, not noise. As the settle-up
+			window ends — the moment the live view begins — the warm disk is seeded
+			pre-aligned with the wave (each orbit's apocenter following the same winding
+			law; the outer disk from corotation outward is seeded here, not at t=0), so
+			full arms are visible immediately and the seed's own winding transient is born
+			inside the capture window; that kinematic alignment then shears away over tens
+			of time units while the wave's forcing keeps the inner arms locked. The cold young disk
 			(blue) responds most sharply, tracing crisp arms like the star-forming ridges of
 			real galaxies, while the warmer old disk stays smooth underneath. The bar (when on)
 			works the same way: inside corotation its field captures stars onto elongated
@@ -145,6 +147,27 @@
 (function() {
 'use strict';
 /* journal
+ * 0.4.1 (outer-band transient capture, S2b):
+ *  - dense m=2 history of the outer band (61 samples of 2 tu, T=30..150, gap
+ *    merging; experiments/check-transient.js) at N=10k/40k, gfb 0/25/50,
+ *    legacy vs S2b seeding (archive/0.4.1-worklog.md): the settle outer amp is
+ *    one turn-on transient - a single long armed epoch T30->44 (plus flickers
+ *    at 10k) dead by T~64 at every N and gain. Per-class phasors pin it on the
+ *    cold young cohort's turn-on response (identical across seeding schemes)
+ *    plus the warm seed's winding remainder.
+ *  - not the feedback: r(C,armed)=0.09-0.17, r(C,A2)=-0.05..0.09 at gfb 25/50
+ *    and both N (a tau-lagged phasor's window coherence saturates ~0.95+ and
+ *    correlates with nothing; armed/unarmed coherence gap absent too), and the
+ *    same epochs exist at gfb=0. Internal = transient winding of the S2 field,
+ *    so the fix is IC-side per the plan's decision rule; gfb stays 0.
+ *  - S2b shipped: the warm outer disk is seeded at the settle boundary
+ *    (P.alignSplit=3, corotation outward) instead of t=0. The seed's winding
+ *    transient is now born at the view start, late flicker quiets (armed
+ *    40->30 tu at 10k, 24->16 at 40k), inner steady state unchanged (late
+ *    0.237/0.241 both ICs), settle/T=75 renders comparable by eye. Honest
+ *    framing: the view-start outer amp is the young response, not the seed -
+ *    the fresh warm seed lands at a partially cancelling phase because the
+ *    seeding map rotates its phasor (dphi(R) sweep over R 2->5.5).
  * 0.4.0 (live m=2 study, S5):
  *  - P.live: the disk's measured m=2 response is fed back as a WKB self-gravity
  *    term Phi = g*2*pi*G*Sig2/k (k = 2p/R), measured in the pattern frame on a

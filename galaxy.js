@@ -31,7 +31,12 @@ function defaultParams() {
 		alignRin: 0.8,
 		alignRpeak: 2.4,
 		alignRtau: 2.2,
-		alignYoung: 0
+		alignYoung: 0,
+		/* S2b split at spiral CR (3.02 at Om 0.30): inside it the forcing
+		 * relocks the seeding during settle, outside it shears - so the outer
+		 * part is seeded at the settle boundary, not at t=0. <= 0 = legacy
+		 * all-at-t=0 seeding. */
+		alignSplit: 3.0
 	};
 }
 
@@ -83,7 +88,7 @@ function createState(nmax) {
 		area[i] = Math.PI * ((rlo + (i + 1) * dr) * (rlo + (i + 1) * dr) - (rlo + i * dr) * (rlo + i * dr));
 	}
 	return {
-		n: nmax, nmax: nmax, t: 0, caps: 0,
+		n: nmax, nmax: nmax, t: 0, caps: 0, seededOuter: false,
 		x: new Float64Array(nmax), y: new Float64Array(nmax), z: new Float64Array(nmax),
 		vx: new Float64Array(nmax), vy: new Float64Array(nmax), vz: new Float64Array(nmax),
 		ax: new Float64Array(nmax), ay: new Float64Array(nmax), az: new Float64Array(nmax),
@@ -652,15 +657,19 @@ function foldPrograde(st, i) {
 }
 
 /* S2: nudge disk stars onto epicyclic ellipses whose major axes lie along the
- * spiral crest phi_spiral(R) at t=0 (same winding law as the potential, pattern
+ * spiral crest phi_spiral(R) (same winding law as the potential, pattern
  * frame). For each thin/young/thick star we apply a small (dR, dvR, dvp)
  * perturbation: radial shift outward near crests, inward near troughs (so
  * orbits compress at the apocenter side = arm); matching epicyclic velocity
  * puts the star on a near-closed ellipse. Random dispersions are preserved.
- * Inner disk is relocked by forcing during the 30-tu settle; outer disk starts
- * with full-disk arms that shear over ~20-70 tu (curve-precession.js t_decorr)
- * — an honest transient unwind, not a render fake. */
-function alignEpicycles(st, P) {
+ * Only stars with rlo <= R <= rhi are touched, so the same routine seeds the
+ * relocked inner disk at t=0 and the shearing outer disk at the settle
+ * boundary (S2b): inside the split the forcing relocks the alignment during
+ * the settle; outside it nothing holds it and it shears over ~20-70 tu
+ * (curve-precession.js t_decorr) - an honest transient unwind, not a render
+ * fake. The crest is evaluated at the CURRENT pattern phase Om*t + p*L, which
+ * matters at the boundary (t=30) and reduces to the t=0 law in initStars. */
+function alignEpicycles(st, P, rlo, rhi) {
 	if (!P.align) return;
 	var n = st.n, i;
 	var p = spiralP(P), r1 = P.spiral.r1;
@@ -671,8 +680,8 @@ function alignEpicycles(st, P) {
 		var xi = st.x[i], yi = st.y[i];
 		var vxi = st.vx[i], vyi = st.vy[i];
 		var R2 = xi * xi + yi * yi, R = Math.sqrt(R2);
-		if (R < 0.3 || R > 7) continue;
-		/* Crest azimuth phi_spiral(R) at t=0 (inertial frame). */
+		if (R < Math.max(0.3, rlo) || R > Math.min(7, rhi)) continue;
+		/* Crest azimuth phi_spiral(R) at the seeding instant (inertial frame). */
 		var L, lx, lr, lg;
 		if (R <= r1lo) L = 0;
 		else if (R >= r1hi) L = Math.log(R / r1);
@@ -680,7 +689,7 @@ function alignEpicycles(st, P) {
 			lx = (R - r1lo) / (r1hi - r1lo); lr = Math.log(R / r1);
 			lg = lx * lx * (3 - 2 * lx); L = lg * lr;
 		}
-		var phiC = p * L;
+		var phiC = P.spiral.om * st.t + p * L;
 		/* Class multiplier: cold young disk is left alone (alignYoung=0) — its own
 		 * linear response already carries arms past R=4 (amp 0.4-0.86); crest-phase
 		 * seeding on top was measured to fight it (young outer amp drops to 0.20).
@@ -690,9 +699,10 @@ function alignEpicycles(st, P) {
 		if (e <= 0.003) continue;
 		var a = e * R; /* radial epicycle amplitude */
 		var phi = Math.atan2(yi, xi);
-		/* Nearest of the two m=2 crests: chi in [-pi/2, pi/2]. */
+		/* Nearest of the two m=2 crests: chi in [-pi/2, pi/2]. phiC carries the
+		 * full pattern phase, so wrap dphi negative-safe before folding. */
 		var dphi = phi - phiC;
-		dphi = ((dphi + Math.PI) % (2 * Math.PI)) - Math.PI;
+		dphi = ((dphi + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
 		if (dphi > Math.PI / 2) dphi -= Math.PI;
 		else if (dphi < -Math.PI / 2) dphi += Math.PI;
 		var ca = Math.cos(dphi), sa = Math.sin(dphi);
@@ -806,8 +816,12 @@ function initStars(st, P, seed) {
 			st.vz[i] = svz + 0.01 * rng.gauss();
 		}
 	}
-	/* S2: seed aligned epicycles BEFORE initial accel computation. */
-	alignEpicycles(st, P);
+	/* S2/S2b: seed aligned epicycles BEFORE initial accel computation. With
+	 * P.alignSplit > 0 this covers only the relocked inner disk (t=0 law, the
+	 * seeding instant is st.t = 0 here); the shearing outer disk is seeded at
+	 * the settle boundary (see settle()). */
+	st.seededOuter = false;
+	alignEpicycles(st, P, 0, P.alignSplit > 0 ? P.alignSplit : 1e9);
 	st.n = nmax; st.t = 0; st.caps = 0;
 	resetLive(st.live);
 	liveMassTable(st, P);
@@ -817,6 +831,15 @@ function initStars(st, P, seed) {
 
 function settle(st, P, steps, dt, barOn, spirOn) {
 	for (var k = 0; k < steps; k++) step(st, P, dt, barOn, spirOn);
+	/* S2b: at the settle boundary seed the shearing outer disk once, then
+	 * refresh a (the seeder moves stars; leapfrog needs fresh a - same rule as
+	 * initStars). Chunked settle callers hit this at the chunk that first
+	 * reaches P.tsettle, so the page and every experiment share one timeline. */
+	if (P.align && P.alignSplit > 0 && !st.seededOuter && st.t >= P.tsettle - 1e-6) {
+		st.seededOuter = true;
+		alignEpicycles(st, P, P.alignSplit, 1e9);
+		computeAccel(st, P, st.t, barOn, spirOn, dt);
+	}
 }
 
 function energy1(x, y, z, vx, vy, vz, t, P, o) {

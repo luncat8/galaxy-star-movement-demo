@@ -1,12 +1,12 @@
 /* Headless smoke run of archive/simple-friction-field-webGL.html with a stub
- * WebGL context + DOM. Catches syntax errors, uniform locations the shader
+ * WebGL2 context + DOM. Catches syntax errors, uniform locations the shader
  * never declares, and the "Colorize" toggle (the slow-field dots must switch
- * from one fixed hue to a strength ramp on a denser arc fan).
+ * from one fixed hue to a strength ramp on a denser instanced arc fan).
  *
  *   node experiments/smoke-archive-webgl.js        # gate
  *   node experiments/smoke-archive-webgl.js --png  # + preview renders
  *
- * --png replays the captured field draws (VS_FIELD maths + soft sprite, the
+ * --png replays the captured field instances (VS_FIELD maths + soft sprite, the
  * same additive blend) into experiments/logs/webgl-field-{plain,colorized}.png:
  * the only way to eyeball a GPU feature in a browserless sandbox.
  */
@@ -31,17 +31,37 @@ function decls(src, kw) {
 
 var log = {
 	missing: [], state: {}, states: [], loc: {}, prog: null, ctx: '', draws: 0,
+	fieldDraws: [],
 	set: function(name, v) { log.state[name] = v; }
 };
 
 function fakeGL() {
-	var consts = {}, locId = 0, locName = {};
+	var consts = {}, locId = 0, locName = {}, bound = {}, curVao = null;
 	['ARRAY_BUFFER', 'TEXTURE_2D', 'FRAMEBUFFER', 'STATIC_DRAW', 'DYNAMIC_DRAW', 'POINTS',
 	 'BLEND', 'TRIANGLE_STRIP', 'TEXTURE0', 'RGBA', 'ONE', 'NEAREST', 'CLAMP_TO_EDGE',
 	 'FLOAT', 'UNSIGNED_BYTE', 'COLOR_ATTACHMENT0', 'TEXTURE_MIN_FILTER', 'TEXTURE_MAG_FILTER',
 	 'TEXTURE_WRAP_S', 'TEXTURE_WRAP_T', 'COMPILE_STATUS', 'LINK_STATUS', 'VERTEX_SHADER',
 	 'FRAGMENT_SHADER', 'ACTIVE_UNIFORMS', 'ACTIVE_ATTRIBUTES'
 	].forEach(function(k, i) { consts[k] = 0x1000 + i; });
+	/* one instanced row of the field fan -> floats at offs/stride of each attrib */
+	function readInst(rec, i, ncomp) {
+		var data = rec.buf.data, base = rec.offs / 4 + i * (rec.stride / 4), out = [], c;
+		for (c = 0; c < ncomp; c++) out.push(data[base + c]);
+		return out;
+	}
+	function captureField(instCount) {
+		var names = log.prog.attribs, va = curVao.attribs, rows = [], i;
+		for (i = 0; i < instCount; i++) {
+			var ph = readInst(va[names.indexOf('aPh')], i, 2);
+			var col = readInst(va[names.indexOf('aCol')], i, 3);
+			var as = readInst(va[names.indexOf('aAS')], i, 2);
+			rows.push({ armPhase: ph[0], thetaOff: ph[1], col: col, alpha: as[0], size: as[1] });
+		}
+		var copy = {};
+		for (var k in log.state) copy[k] = log.state[k];
+		log.states.push(copy);
+		log.fieldDraws.push({ inst: instCount, rows: rows, u: copy });
+	}
 	return Object.assign({}, consts, {
 		createShader: function(t) { return { src: '' }; },
 		shaderSource: function(s, src) { s.src = src; },
@@ -52,7 +72,7 @@ function fakeGL() {
 		linkProgram: function(p) {
 			p.uniforms = decls(p.src, 'uniform');
 			p.attribs = decls(p.src, 'attribute');
-			p.field = p.uniforms.indexOf('uArmPhase') >= 0;   // only the field program
+			p.field = p.uniforms.indexOf('uR0') >= 0;   // only the field program
 		},
 		getProgramParameter: function(p, what) {
 			if (what === consts.ACTIVE_UNIFORMS) return p.uniforms.length;
@@ -75,15 +95,28 @@ function fakeGL() {
 		uniform3f: function(l, a, b, c) { log.set(locName[l], [a, b, c]); },
 		drawArrays: function() {
 			log.draws++;
-			if (!log.prog.field) return;
-			var copy = {};
-			for (var k in log.state) copy[k] = log.state[k];
-			log.states.push(copy);
 		},
-		createBuffer: function() { return {}; }, bindBuffer: function() {},
-		bufferData: function() {}, bufferSubData: function() {},
+		drawArraysInstanced: function(mode, first, count, instCount) {
+			log.draws++;
+			if (!log.prog.field) return;
+			captureField(instCount);
+		},
+		createBuffer: function() { return { data: null }; },
+		bindBuffer: function(t, b) { bound[t] = b; },
+		bufferData: function(t, data) { if (bound[t]) bound[t].data = data; },
+		bufferSubData: function() {},
+		createVertexArray: function() { return { attribs: {} }; },
+		bindVertexArray: function(v) { curVao = v; },
 		enableVertexAttribArray: function() {}, disableVertexAttribArray: function() {},
-		vertexAttribPointer: function() {}, createTexture: function() { return {}; },
+		vertexAttribPointer: function(loc, size, type, norm, stride, offs) {
+			if (!curVao) return;
+			var prev = curVao.attribs[loc] || { div: 0 };
+			curVao.attribs[loc] = { size: size, stride: stride, offs: offs, div: prev.div, buf: bound[consts.ARRAY_BUFFER] };
+		},
+		vertexAttribDivisor: function(loc, div) {
+			if (curVao && curVao.attribs[loc]) curVao.attribs[loc].div = div;
+		},
+		createTexture: function() { return {}; },
 		bindTexture: function() {}, texImage2D: function() {}, texParameteri: function() {},
 		createFramebuffer: function() { return {}; }, bindFramebuffer: function() {},
 		framebufferTexture2D: function() {}, deleteTexture: function() {}, deleteFramebuffer: function() {},
@@ -140,13 +173,17 @@ function frame() {
 function sample() {
 	log.draws = 0;
 	log.states.length = 0;
+	log.fieldDraws.length = 0;
 	frame();
-	var hues = [];
-	log.states.forEach(function(s) {
-		var c = s.uColor.join(',');
-		if (hues.indexOf(c) < 0) hues.push(c);
+	var hues = [], inst = 0;
+	log.fieldDraws.forEach(function(d) {
+		inst += d.inst;
+		d.rows.forEach(function(r) {
+			var c = r.col.join(',');
+			if (hues.indexOf(c) < 0) hues.push(c);
+		});
 	});
-	return { draws: log.draws, arcs: log.states.length, hues: hues, states: log.states.slice() };
+	return { draws: log.draws, arcs: inst, hues: hues, fieldDraws: log.fieldDraws.slice() };
 }
 
 var i;
@@ -156,45 +193,50 @@ els['btn-field'].fire('click');
 var plain = sample();
 els['btn-color'].fire('click');
 var tinted = sample();
-var tintStates = tinted.states;
+var tintDraws = tinted.fieldDraws;
 els['btn-color'].fire('click');
 var restored = sample();
 
-if (hidden.arcs !== 0) L.fail('field hidden but the field program still drew ' + hidden.arcs + ' arcs');
+if (hidden.arcs !== 0) L.fail('field hidden but the field program still drew ' + hidden.arcs + ' instances');
 if (plain.hues.length !== 1) L.fail('monochrome field drew ' + plain.hues.length + ' hues: ' + plain.hues.join(' '));
 if (tinted.hues.length < 8) L.fail('colorize drew only ' + tinted.hues.length + ' distinct hues');
 if (tinted.arcs <= plain.arcs) L.fail('colorize fan is not denser: ' + tinted.arcs + ' <= ' + plain.arcs);
+if (tinted.arcs !== 60 * (plain.arcs / 7)) L.fail('expected the 60-arc fan x arm count, got ' + tinted.arcs);
 if (restored.hues.length !== 1 || restored.hues[0] !== plain.hues[0])
 	L.fail('toggling back did not restore the fixed hue');
-console.log('frames ok; arcs/frame plain=' + plain.arcs + ' colorized=' + tinted.arcs +
+console.log('frames ok; field instances/frame plain=' + plain.arcs + ' colorized=' + tinted.arcs +
 	' hues=' + tinted.hues.length + ' (' + tinted.hues[0] + ' .. ' + tinted.hues[tinted.hues.length - 1] + ')');
 
-/* ---- optional preview renders: replay the captured field draws ---- */
-function renderPng(label, states) {
+/* ---- optional preview renders: replay the captured field instances ---- */
+function renderPng(label, draws) {
 	var W = global.innerWidth, H = global.innerHeight, fb = new Float32Array(W * H * 3);
-	var CAM = 12, NS = 1500, x, y, k, o, c;
+	var CAM = 12, NS = 1500, x, y, k, o, c, nArcs = 0;
 	for (o = 0; o < W * H * 3; o += 3) { fb[o] = 0.016; fb[o + 1] = 0.008; fb[o + 2] = 0.031; }
-	states.forEach(function(u) {
-		var col = u.uColor;
-		for (k = 0; k < NS; k++) {
-			var t = k / (NS - 1), r = u.uR0 + (u.uR1 - u.uR0) * t;
-			var bt = Math.log(r) / u.uTanPitch + u.uPatternPhase + u.uArmPhase + u.uThetaOff;
-			var px = r * Math.cos(bt), py = r * Math.sin(bt);
-			var rx = px * u.uCosR - py * u.uSinR, ry = px * u.uSinR + py * u.uCosR;
-			var ps = CAM / (CAM + ry * u.uSinT);
-			var sx = rx * u.uScale * ps, sy = ry * u.uCosT * u.uScale * ps, rad = u.uPointSize * 0.5;
-			var a = u.uAlpha * Math.min(1, t / 0.02) * (1 - Math.min(1, Math.max(0, (t - 0.96) / 0.04)));
-			var x0 = Math.max(0, Math.floor(W / 2 + sx - rad)), x1 = Math.min(W - 1, Math.ceil(W / 2 + sx + rad));
-			var y0 = Math.max(0, Math.floor(H / 2 + sy - rad)), y1 = Math.min(H - 1, Math.ceil(H / 2 + sy + rad));
-			for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
-				var dx = (x - (W / 2 + sx)) / rad, dy = (y - (H / 2 + sy)) / rad;
-				var r2 = dx * dx + dy * dy;
-				if (r2 > 1) continue;                       // FS_FIELD: discard outside sprite
-				var w = Math.exp(-r2 * 4) * a;              // FS_FIELD falloff x additive blend
-				o = (y * W + x) * 3;
-				for (c = 0; c < 3; c++) fb[o + c] += col[c] * w;
+	draws.forEach(function(d) {
+		var u = d.u;
+		d.rows.forEach(function(row) {
+			nArcs++;
+			var col = row.col;
+			for (k = 0; k < NS; k++) {
+				var t = k / (NS - 1), r = u.uR0 + (u.uR1 - u.uR0) * t;
+				var bt = Math.log(r) / u.uTanPitch + u.uPatternPhase + row.armPhase + row.thetaOff;
+				var px = r * Math.cos(bt), py = r * Math.sin(bt);
+				var rx = px * u.uCosR - py * u.uSinR, ry = px * u.uSinR + py * u.uCosR;
+				var ps = CAM / (CAM + ry * u.uSinT);
+				var sx = rx * u.uScale * ps, sy = ry * u.uCosT * u.uScale * ps, rad = row.size * u.uPtScale * 0.5;
+				var a = row.alpha * Math.min(1, t / 0.02) * (1 - Math.min(1, Math.max(0, (t - 0.96) / 0.04)));
+				var x0 = Math.max(0, Math.floor(W / 2 + sx - rad)), x1 = Math.min(W - 1, Math.ceil(W / 2 + sx + rad));
+				var y0 = Math.max(0, Math.floor(H / 2 + sy - rad)), y1 = Math.min(H - 1, Math.ceil(H / 2 + sy + rad));
+				for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
+					var dx = (x - (W / 2 + sx)) / rad, dy = (y - (H / 2 + sy)) / rad;
+					var r2 = dx * dx + dy * dy;
+					if (r2 > 1) continue;                       // FS_FIELD: discard outside sprite
+					var w = Math.exp(-r2 * 4) * a;              // FS_FIELD falloff x additive blend
+					o = (y * W + x) * 3;
+					for (c = 0; c < 3; c++) fb[o + c] += col[c] * w;
+				}
 			}
-		}
+		});
 	});
 	var stride = W * 3 + 1, raw = Buffer.alloc(H * stride), p = 0;
 	for (y = 0; y < H; y++) {
@@ -227,11 +269,11 @@ function renderPng(label, states) {
 	fs.mkdirSync(path.dirname(out), { recursive: true });
 	fs.writeFileSync(out, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
 		chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
-	console.log('wrote ' + path.relative(process.cwd(), out) + ' (' + states.length + ' arcs)');
+	console.log('wrote ' + path.relative(process.cwd(), out) + ' (' + nArcs + ' arcs)');
 }
 if (WANT_PNG) {
-	renderPng('plain', plain.states);
-	renderPng('colorized', tintStates);
+	renderPng('plain', plain.fieldDraws);
+	renderPng('colorized', tintDraws);
 }
 
 L.pass('smoke-archive-webgl: page runs, Colorize recolors the slow-field dots');

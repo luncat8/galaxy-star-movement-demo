@@ -270,8 +270,8 @@
 
   <div id="glfail">
     <div class="panel">
-      <b>WEBGL UNAVAILABLE</b><br>
-      This simulation renders through WebGL. Your browser or device
+      <b>WEBGL 2 UNAVAILABLE</b><br>
+      This simulation renders through WebGL 2. Your browser or device
       blocked context creation. Enable hardware acceleration and reload.
     </div>
   </div>
@@ -280,11 +280,15 @@
   'use strict';
 
   /* ============================================================
-     DENSITY WAVES — WebGL port
+     DENSITY WAVES — WebGL 2 port
      - Physics (density-wave damping + per-star eccentric orbits)
-       stays on the CPU, derived from the Canvas2D original.
+       stays on the CPU, derived from the Canvas2D original. The two
+       transcendental calls per star (log of the orbit radius factor,
+       exp of the arm Gaussian) go through small linear LUTs.
      - All rendering moved to the GPU: procedural point sprites,
-       shader-based 3D projection, additive blending.
+       shader-based 3D projection, additive blending. Per-program
+       VAOs and one instanced draw for the whole field fan (arm index
+       and fan offset/colour/alpha/size are per-instance attributes).
      - Trails use a ping-pong framebuffer pair (WebGL cannot fade
        the default framebuffer like Canvas2D's source-over fill).
      - "Slow Field" spiral curves are drawn as dense additive dots
@@ -301,12 +305,10 @@
     alpha: false, depth: false, stencil: false, antialias: false,
     preserveDrawingBuffer: false, powerPreference: 'high-performance'
   };
-  const gl = canvas.getContext('webgl2', CONTEXT_OPTS)
-          || canvas.getContext('webgl', CONTEXT_OPTS)
-          || canvas.getContext('experimental-webgl', CONTEXT_OPTS);
+  const gl = canvas.getContext('webgl2', CONTEXT_OPTS);
   if (!gl) {
     document.getElementById('glfail').style.display = 'flex';
-    throw new Error('WebGL not supported');
+    throw new Error('WebGL 2 not supported');
   }
 
   // ======== STAR COUNTS (GPU leaves plenty of headroom — raise freely) ========
@@ -316,6 +318,7 @@
   const CAM_DIST = 12;
   const V0 = 1.8;           // flat rotation-curve speed
   const SIGMA_SQ2 = 0.125;  // 2 * sigma^2 of the arm Gaussian (physics + field draw)
+  const INV_SIGMA_SQ2 = 1 / SIGMA_SQ2;
 
   // ======== PER-STAR ARRAYS (physics state, CPU-side) ========
   const r_arr = new Float32Array(N_DISK);        // mean orbit radius
@@ -325,6 +328,7 @@
   const brightness_arr = new Float32Array(N_DISK);
   const ecc_u_arr = new Float32Array(N_DISK);    // per-star eccentricity seed 0..1
   const peri_arr = new Float32Array(N_DISK);     // per-star periapsis angle
+  const logr_arr = new Float32Array(N_DISK);     // log(mean radius), constant per star
 
   const bulge_r = new Float32Array(N_BULGE);     // mean orbit radius
   const bulge_theta = new Float32Array(N_BULGE);
@@ -333,10 +337,22 @@
   const bulge_ecc_u = new Float32Array(N_BULGE); // per-star eccentricity seed 0..1
   const bulge_peri = new Float32Array(N_BULGE);  // per-star periapsis angle
 
+  // Transcendental LUTs for the update loop (finding-9 style hot-path budget):
+  // exp(-x) over [0, 20] (beyond that it underflows to ~2e-9 anyway) and
+  // log(1+u) over the exact u range of the eccentric factor, |u| <= 0.6.
+  // Linear interpolation error is below 2e-5, well under float32 state noise.
+  const EXP_N = 1024, EXP_SCALE = EXP_N / 20;
+  const exp_lut = new Float32Array(EXP_N + 1);
+  const LOG1P_LO = -0.6, LOG1P_N = 512, LOG1P_SCALE = LOG1P_N / 1.2;
+  const log1p_lut = new Float32Array(LOG1P_N + 1);
+  for (let i = 0; i <= EXP_N; i++) exp_lut[i] = Math.exp(-i / EXP_SCALE);
+  for (let i = 0; i <= LOG1P_N; i++) log1p_lut[i] = Math.log(1 + LOG1P_LO + i / LOG1P_SCALE);
+
   function init() {
     for (let i = 0; i < N_DISK; i++) {
       const r = 0.2 + Math.pow(Math.random(), 0.6) * 6.5;
       r_arr[i] = r;
+      logr_arr[i] = Math.log(r);
       theta_arr[i] = Math.random() * TAU;
       z_amp_arr[i] = (0.05 + 0.35 * Math.random()) * Math.exp(-r * 0.1);
       z_phase_arr[i] = Math.random() * TAU;
@@ -383,11 +399,19 @@
   // add up to roughly the same light).
   const FIELD_WING = 0.36;                           // theta span drawn each side
   const FAN_MAX = 60;
+  const ARMS_MAX = 5;
   const fanOff = new Float32Array(FAN_MAX);
   const fanAlpha = new Float32Array(FAN_MAX);
   const fanSize = new Float32Array(FAN_MAX);
   const fanD = new Float32Array(FAN_MAX);            // field strength at that offset
   let fanN = 0;
+
+  // One instanced draw covers the whole fan: per-instance row is
+  // [armPhase, thetaOff, r, g, b, alpha, size]. Rebuilt only when the fan
+  // (colorize toggle) or the arm count changes — never per frame.
+  const INST_STRIDE = 7;
+  const fieldInst = new Float32Array(FAN_MAX * ARMS_MAX * INST_STRIDE);
+  let instN = 0, instDirty = true;
 
   function buildFan(colorize) {
     fanN = 0;
@@ -399,6 +423,7 @@
         const d = Math.exp(-(off * off) / SIGMA_SQ2);
         fanOff[fanN] = off; fanAlpha[fanN] = d * 0.4 * 0.5; fanSize[fanN] = 3.0; fanD[fanN] = d; fanN++;
       }
+      instDirty = true;
       return;
     }
     const gain = 0.4 * 0.5 / 7;                      // per-arc light of the coarse fan
@@ -407,6 +432,7 @@
       const d = Math.exp(-(off * off) / SIGMA_SQ2);
       fanOff[fanN] = off; fanAlpha[fanN] = d * gain; fanSize[fanN] = 7.0; fanD[fanN] = d; fanN++;
     }
+    instDirty = true;
   }
   buildFan(false);
 
@@ -591,21 +617,23 @@
       vAlpha = 0.8 * ps;
     }`;
 
-  // Slow-field visualization: log-spiral arcs rendered as soft additive dots.
-  // Colorize mode feeds uColor from the strength ramp instead of the fixed hue.
+  // Slow-field visualization: log-spiral arcs rendered as soft additive dots,
+  // one instanced draw. Per-instance attributes carry the arm phase, the fan's
+  // theta offset and the colorize strength ramp (or the fixed hue).
   const VS_FIELD = `
     precision highp float;
     attribute float aT;
+    attribute vec2 aPh;       // armPhase, thetaOff (per instance)
+    attribute vec3 aCol;      // ramp or fixed hue (per instance)
+    attribute vec2 aAS;       // alpha, size (per instance)
     uniform float uCosR, uSinR, uCosT, uSinT;
     uniform float uScale, uHalfW, uHalfH, uCamDist;
-    uniform float uTanPitch, uPatternPhase, uArmPhase, uThetaOff;
-    uniform float uAlpha, uPointSize, uR0, uR1;
-    uniform vec3 uColor;
+    uniform float uTanPitch, uPatternPhase, uPtScale, uR0, uR1;
     varying vec3 vColor;
     varying float vAlpha;
     void main() {
       float r = mix(uR0, uR1, aT);
-      float bt = log(r) / uTanPitch + uPatternPhase + uArmPhase + uThetaOff;
+      float bt = log(r) / uTanPitch + uPatternPhase + aPh.x + aPh.y;
       float px = r * cos(bt);
       float py = r * sin(bt);
       float rx = px * uCosR - py * uSinR;
@@ -615,10 +643,10 @@
       float ps = uCamDist / (uCamDist + pjz);
       vec2 screen = vec2(rx, pjy) * (uScale * ps);
       gl_Position = vec4(screen.x / uHalfW, -screen.y / uHalfH, 0.0, 1.0);
-      gl_PointSize = uPointSize;
+      gl_PointSize = aAS.y * uPtScale;
       float edge = smoothstep(0.0, 0.02, aT) * (1.0 - smoothstep(0.96, 1.0, aT));
-      vColor = uColor;
-      vAlpha = uAlpha * edge;
+      vColor = aCol;
+      vAlpha = aAS.x * edge;
     }`;
 
   const FS_FIELD = `
@@ -670,30 +698,28 @@
     return { p, u, a };
   }
 
-  const enabledAttribs = new Set();
-  function useAttribs(prog, bindings) {
-    const used = new Set();
-    for (const name in bindings) {
+  // Attrib layout lives in a VAO per program, configured once at setup — the
+  // frame path only binds a VAO (no Set/bookkeeping churn between draws).
+  function makeVAO(prog, attribs) {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    for (let i = 0; i < attribs.length; i++) {
+      const name = attribs[i][0], size = attribs[i][1], buf = attribs[i][2];
+      const stride = attribs[i][3] || 0, offs = attribs[i][4] || 0, div = attribs[i][5] || 0;
       const loc = prog.a[name];
       if (loc === undefined || loc < 0) continue;
-      const size = bindings[name][0], buf = bindings[name][1];
-      const stride = bindings[name][2] || 0, offs = bindings[name][3] || 0;
       gl.bindBuffer(gl.ARRAY_BUFFER, buf);
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, offs);
-      used.add(loc);
+      if (div) gl.vertexAttribDivisor(loc, div);
     }
-    for (const loc of Array.from(enabledAttribs)) {
-      if (!used.has(loc)) {
-        gl.disableVertexAttribArray(loc);
-        enabledAttribs.delete(loc);
-      }
-    }
+    gl.bindVertexArray(null);
+    prog.vao = vao;
   }
 
   // ======== GL OBJECTS ========
   let progDisk, progBulge, progField, progBg, progPresent;
-  let quadBuf, diskStaticBuf, diskThetaBuf, bulgeStaticBuf, bulgeThetaBuf, fieldTBuf;
+  let quadBuf, diskStaticBuf, diskThetaBuf, bulgeStaticBuf, bulgeThetaBuf, fieldTBuf, fieldInstBuf;
   const fbo = [null, null], fboTex = [null, null];
   let cur = 0;
   let W = 0, H = 0, DPR = 1, fw = 0, fh = 0;
@@ -729,8 +755,58 @@
     fieldTBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, fieldTBuf);
     gl.bufferData(gl.ARRAY_BUFFER, fieldT, gl.STATIC_DRAW);
+
+    fieldInstBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, fieldInstBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, fieldInst, gl.DYNAMIC_DRAW);
+    instDirty = true;
+
+    makeVAO(progDisk, [
+      ['aTheta', 1, diskThetaBuf],
+      ['aA', 4, diskStaticBuf, 24, 0],
+      ['aB', 2, diskStaticBuf, 24, 16]
+    ]);
+    makeVAO(progBulge, [
+      ['aTheta', 1, bulgeThetaBuf],
+      ['aA', 3, bulgeStaticBuf, 20, 0],
+      ['aB', 2, bulgeStaticBuf, 20, 12]
+    ]);
+    makeVAO(progField, [
+      ['aT', 1, fieldTBuf],
+      ['aPh', 2, fieldInstBuf, 4 * INST_STRIDE, 0, 1],
+      ['aCol', 3, fieldInstBuf, 4 * INST_STRIDE, 8, 1],
+      ['aAS', 2, fieldInstBuf, 4 * INST_STRIDE, 20, 1]
+    ]);
+    makeVAO(progBg, [['aQuad', 2, quadBuf]]);
+    makeVAO(progPresent, [['aQuad', 2, quadBuf]]);
+    gl.bindVertexArray(null);
   }
   initGL();
+
+  function syncFieldInstances() {
+    if (!instDirty) return;
+    instDirty = false;
+    let n = 0;
+    for (let arm = 0; arm < num_arms; arm++) {
+      const armPhase = arm * arm_offset;
+      for (let k = 0; k < fanN; k++) {
+        const c = showFieldColor ? rampColor(fanD[k], fieldColor) : FIELD_HUE;
+        const o = n * INST_STRIDE;
+        fieldInst[o] = armPhase;
+        fieldInst[o + 1] = fanOff[k];
+        fieldInst[o + 2] = c[0];
+        fieldInst[o + 3] = c[1];
+        fieldInst[o + 4] = c[2];
+        fieldInst[o + 5] = fanAlpha[k];
+        fieldInst[o + 6] = fanSize[k];
+        n++;
+      }
+    }
+    instN = n;
+    gl.bindBuffer(gl.ARRAY_BUFFER, fieldInstBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, fieldInst.subarray(0, n * INST_STRIDE), gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(null);
+  }
 
   function createTargets() {
     for (let i = 0; i < 2; i++) {
@@ -779,17 +855,30 @@
   // speed follows the flat rotation curve omega = V0 / (rho + 0.2), so stars
   // sweep faster near periapsis (Kepler-style). The path is a fixed closed curve.
   function update(dt) {
-    const tan_pitch = Math.tan(pitch_deg * Math.PI / 180);
+    const inv_tan_pitch = 1 / Math.tan(pitch_deg * Math.PI / 180);
     let arm_count = 0;
 
     for (let i = 0; i < N_DISK; i++) {
       const th = theta_arr[i];
-      const rho = r_arr[i] * (1 + ecc_max * ecc_u_arr[i] * Math.cos(th - peri_arr[i]));
-      const base_arm = Math.log(rho) / tan_pitch + pattern_phase;
+      const u = ecc_max * ecc_u_arr[i] * Math.cos(th - peri_arr[i]);
+      const rho = r_arr[i] * (1 + u);
+      // log(rho) = log(r) + log(1+u): only the second term varies per frame
+      let lu = (u - LOG1P_LO) * LOG1P_SCALE;
+      let li = lu | 0;
+      if (li < 0) li = 0;
+      else if (li > LOG1P_N - 1) li = LOG1P_N - 1;
+      const lf = lu - li;
+      const log_rho = logr_arr[i] + log1p_lut[li] + (log1p_lut[li + 1] - log1p_lut[li]) * lf;
+      const base_arm = log_rho * inv_tan_pitch + pattern_phase;
       let delta = (th - base_arm) % arm_offset;
       if (delta < 0) delta += arm_offset;
       if (delta > arm_offset / 2) delta -= arm_offset;
-      const D = Math.exp(-(delta * delta) / SIGMA_SQ2);
+      const x = (delta * delta) * INV_SIGMA_SQ2;
+      let D = 0;
+      if (x < 20) {
+        const xf = x * EXP_SCALE, xi = xf | 0, ff = xf - xi;
+        D = exp_lut[xi] + (exp_lut[xi + 1] - exp_lut[xi]) * ff;
+      }
       const omega = (V0 / (rho + 0.2)) * (1 - damping_strength * D);
       let nth = th + omega * dt;
       if (nth > TAU) nth -= TAU;
@@ -821,34 +910,22 @@
   }
 
   function drawField(cosR, sinR, cosT, sinT, scalePx, tan_pitch) {
+    syncFieldInstances();
     gl.useProgram(progField.p);
-    useAttribs(progField, { aT: [1, fieldTBuf] });
+    gl.bindVertexArray(progField.vao);
     const u = progField.u;
     setCam(u, cosR, sinR, cosT, sinT, scalePx);
     gl.uniform1f(u.uTanPitch, tan_pitch);
     gl.uniform1f(u.uPatternPhase, pattern_phase);
+    gl.uniform1f(u.uPtScale, DPR);
     gl.uniform1f(u.uR0, 0.5);
     gl.uniform1f(u.uR1, 9.5);
-    for (let arm = 0; arm < num_arms; arm++) {
-      gl.uniform1f(u.uArmPhase, arm * arm_offset);
-      for (let k = 0; k < fanN; k++) {
-        const c = showFieldColor ? rampColor(fanD[k], fieldColor) : FIELD_HUE;
-        gl.uniform3f(u.uColor, c[0], c[1], c[2]);
-        gl.uniform1f(u.uThetaOff, fanOff[k]);
-        gl.uniform1f(u.uAlpha, fanAlpha[k]);
-        gl.uniform1f(u.uPointSize, fanSize[k] * DPR);
-        gl.drawArrays(gl.POINTS, 0, FIELD_SAMPLES);
-      }
-    }
+    gl.drawArraysInstanced(gl.POINTS, 0, FIELD_SAMPLES, instN);
   }
 
   function drawBulge(cosR, sinR, cosT, sinT, scalePx) {
     gl.useProgram(progBulge.p);
-    useAttribs(progBulge, {
-      aTheta: [1, bulgeThetaBuf],
-      aA: [3, bulgeStaticBuf, 20, 0],
-      aB: [2, bulgeStaticBuf, 20, 12]
-    });
+    gl.bindVertexArray(progBulge.vao);
     const u = progBulge.u;
     setCam(u, cosR, sinR, cosT, sinT, scalePx);
     gl.uniform1f(u.uEccMax, ecc_max);
@@ -858,11 +935,7 @@
 
   function drawDisk(cosR, sinR, cosT, sinT, scalePx, tan_pitch) {
     gl.useProgram(progDisk.p);
-    useAttribs(progDisk, {
-      aTheta: [1, diskThetaBuf],
-      aA: [4, diskStaticBuf, 24, 0],
-      aB: [2, diskStaticBuf, 24, 16]
-    });
+    gl.bindVertexArray(progDisk.vao);
     const u = progDisk.u;
     setCam(u, cosR, sinR, cosT, sinT, scalePx);
     gl.uniform1f(u.uTanPitch, tan_pitch);
@@ -875,18 +948,19 @@
   }
 
   function render(simDt) {
-    update(simDt);
+    // at speed 0 nothing moves: skip physics and the per-frame uploads
+    if (simDt > 0) {
+      update(simDt);
+      gl.bindBuffer(gl.ARRAY_BUFFER, diskThetaBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, theta_arr);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bulgeThetaBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, bulge_theta);
+    }
 
     const tan_pitch = Math.tan(pitch_deg * Math.PI / 180);
     const scalePx = Math.min(W, H) / 14 * zoom * DPR;
     const cosR = Math.cos(rotZ), sinR = Math.sin(rotZ);
     const cosT = Math.cos(tilt), sinT = Math.sin(tilt);
-
-    // upload dynamic star phases
-    gl.bindBuffer(gl.ARRAY_BUFFER, diskThetaBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, theta_arr);
-    gl.bindBuffer(gl.ARRAY_BUFFER, bulgeThetaBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, bulge_theta);
 
     const writeFbo = fbo[cur];
     const readTex = fboTex[1 - cur];
@@ -897,7 +971,7 @@
     gl.disable(gl.BLEND);
 
     gl.useProgram(progBg.p);
-    useAttribs(progBg, { aQuad: [2, quadBuf] });
+    gl.bindVertexArray(progBg.vao);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, readTex);
     gl.uniform1i(progBg.u.uPrev, 0);
@@ -919,15 +993,14 @@
     gl.viewport(0, 0, fw, fh);
     gl.disable(gl.BLEND);
     gl.useProgram(progPresent.p);
-    useAttribs(progPresent, { aQuad: [2, quadBuf] });
+    gl.bindVertexArray(progPresent.vao);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, fboTex[cur]);
     gl.uniform1i(progPresent.u.uTex, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
 
     cur = 1 - cur;
-
-    document.getElementById('cnt-arm').textContent = armCount.toLocaleString();
   }
 
   // ======== INTERACTION ========
@@ -1001,6 +1074,7 @@
     num_arms = parseInt(armsSlider.value);
     arm_offset = TAU / num_arms;
     armsVal.textContent = num_arms;
+    instDirty = true;                 // per-instance armPhase depends on arm_offset
   });
 
   const btnField = document.getElementById('btn-field');
@@ -1032,6 +1106,10 @@
   document.getElementById('stat-stars').textContent = (N_DISK + N_BULGE).toLocaleString();
   document.getElementById('cnt-disk').textContent = N_DISK.toLocaleString();
   document.getElementById('cnt-bulge').textContent = N_BULGE.toLocaleString();
+  const statFps = document.getElementById('stat-fps');
+  const statOmega = document.getElementById('stat-omega');
+  const statPitch = document.getElementById('stat-pitch');
+  const cntArm = document.getElementById('cnt-arm');
 
   // ======== MAIN LOOP ========
   let lastTime = performance.now();
@@ -1058,9 +1136,10 @@
         fps = Math.round(frames / fpsTime);
         frames = 0;
         fpsTime = 0;
-        document.getElementById('stat-fps').textContent = fps;
-        document.getElementById('stat-omega').textContent = Omega_p.toFixed(2);
-        document.getElementById('stat-pitch').textContent = pitch_deg + '\u00b0';
+        statFps.textContent = fps;
+        statOmega.textContent = Omega_p.toFixed(2);
+        statPitch.textContent = pitch_deg + '\u00b0';
+        cntArm.textContent = armCount.toLocaleString();
       }
     }
 

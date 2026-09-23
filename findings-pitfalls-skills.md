@@ -268,3 +268,28 @@ first "Colorize" fan (25 arcs) read as stripes instead of a ribbon, and the
 strength->hue ramp needed its warm end restricted to the core (indices
 0.80-0.97) before it read as a heat ribbon. Keep the replay in the gate
 (`--png` flag), not in a scratch file, so the visual evidence stays reproducible.
+
+## 27. Before gating a transient, split the phasor by population — never gate one snapshot
+
+The all-class outer band at view start is ~3:1 young:warm, and the young series
+is identical across IC schemes — a whole-band A/B gate measures the wrong
+population. Single snapshots of a near-noise quantity cannot gate anything at
+all: outer-band A2 samples wander +-0.04 run to run at N=40k, swamping the
+seed's ~0.03 contribution (the usable statistic is the windowed coherent
+amplitude over the first samples). Companion trap: a tau-lagged complex order
+parameter's short-window coherence saturates at 0.95+ whatever the driver, so a
+"feedback correlation" probe built from it can neither condemn nor acquit (0.4.1
+needed the armed/unarmed coherence gap and the gfb=0 twins instead; r(C,*)
+reported 0.09-0.17 and -0.05..0.09 with no discrimination power).
+
+## 28. A position-map seeding law's output phasor is not its input phase
+
+Seeding epicycles through a differentially rotating map (phi -> phi + dphi(R),
+sweeping 0.93->2.44 rad over R 2->5.5) rotates and smears the m=2 signature:
+measured 0.083 rad-length at angle -1.87 for a law set at -2.14. Placed against
+the disk's own forcing-aligned response the fresh seed lands partially
+cancelling (settle coherent outer A2 0.094 vs 0.128 for the aged t=0 seed at
+N=40k) even though its law was "aligned with the crest". Measure the map's
+output signature (amp AND phase, per annulus) before reasoning about
+co-location or "which phase it lands on"; the map's geometry is part of the
+seeding.
