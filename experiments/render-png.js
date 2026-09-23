@@ -6,6 +6,9 @@
  *   noalign calm with alignment off (P.align=0) - S2 A/B baseline
  *   live    calm + S5 live m=2 feedback (P.live.gfb, env LIVE, default 50)
  *   live-noalign  live with S2 alignment off (does the seeded field feed it?)
+ * env: SPLIT=<R> overrides P.alignSplit (0 = legacy t=0 seeding);
+ *      PHASE=<deg> overrides P.alignPhase (0 = seed at the potential hill,
+ *      90 = at the well, where the forced response crests - check-arm-phase).
  */
 'use strict';
 var zlib = require('zlib'), fs = require('fs'), path = require('path');
@@ -31,6 +34,7 @@ else if (name !== 'calm') {
 	process.exit(1);
 }
 if (process.env.SPLIT !== undefined) P.alignSplit = parseFloat(process.env.SPLIT);
+if (process.env.PHASE !== undefined) P.alignPhase = parseFloat(process.env.PHASE) * Math.PI / 180;
 P.bar.g = 0; P.spiral.g = 1;
 
 /* Framebuffer (linear, additive) + z-free planar projection. */
@@ -265,7 +269,8 @@ function snapshot(st, om, tag) {
 	writePng(path.join(__dirname, 'logs', 'render-' + label + '-' + tag + '.png'), W, H, null);
 }
 
-var label = name + (process.env.SPLIT !== undefined ? '-s' + process.env.SPLIT : '');
+var label = name + (process.env.SPLIT !== undefined ? '-s' + process.env.SPLIT : '') +
+	(process.env.PHASE !== undefined ? '-p' + process.env.PHASE : '');
 
 var omGlow = P.spiral.om;
 var st = Galaxy.createState(N);

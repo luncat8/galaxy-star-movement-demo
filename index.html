@@ -109,8 +109,9 @@
 			corotation (marked rings); beyond corotation the disk reads smoother and stars
 			disperse — that outer scatter is real orbit physics, not noise. As the settle-up
 			window ends — the moment the live view begins — the warm disk is seeded
-			pre-aligned with the wave (each orbit's apocenter following the same winding
-			law; the outer disk from corotation outward is seeded here, not at t=0), so
+			pre-aligned with the wave (each orbit's apocenter placed in the potential trough
+			along the same winding law — where the forced response actually crests; the outer
+			disk from corotation outward is seeded here, not at t=0), so
 			full arms are visible immediately and the seed's own winding transient is born
 			inside the capture window; that kinematic alignment then shears away over tens
 			of time units while the wave's forcing keeps the inner arms locked. The cold young disk
@@ -147,6 +148,21 @@
 (function() {
 'use strict';
 /* journal
+ * 0.4.2 (arm-phase audit):
+ *  - experiments/check-arm-phase.js scans the potential itself: the reference
+ *    azimuth Om*t + p*L(R) that every phasor here is measured against is the
+ *    potential HILL (+A cos), the arm trough is 90 deg on. The "~pi offset" of
+ *    the inner response (0.4.1) was that label: the align=0 disk crests in the
+ *    WELL to within 5 deg over ILR-CR at N=10k/40k, settle and late - the
+ *    in-phase forced response, real physics. The crest swings toward the hill
+ *    only past CR (finding 12 with its sign). Bar x1 body: along the bar well.
+ *  - S2/S2b seeded apocenters on the hill (24-35 deg from the well after the
+ *    map rotation; the S2b boundary seed landed 83-88 deg = against the young
+ *    response). P.alignPhase (new, pi/2 = well) moves the seed to where the
+ *    disk responds: S2b outer settle A2 0.073 -> 0.172, warm settleCoh 0.059
+ *    -> 0.103, late births 3 -> 1, inner steady state unchanged (0.237 ->
+ *    0.239); alignPhase=0 is bit-identical to 0.4.1. Bar-captured tracer test
+ *    fixed to the well axis (it flagged the depleted minor axis).
  * 0.4.1 (outer-band transient capture, S2b):
  *  - dense m=2 history of the outer band (61 samples of 2 tu, T=30..150, gap
  *    merging; experiments/check-transient.js) at N=10k/40k, gfb 0/25/50,
@@ -671,6 +687,8 @@ function drawTracers(cb, sb, ct, st_) {
 		ctx.stroke();
 	}
 	ctx.globalAlpha = 1;
+	/* bar frame: xb along the potential hill (Om_b*t), yb along the well. The
+	 * bar body (x1 orbits) lies along the WELL - check-arm-phase.js part D. */
 	var ba = P.bar.om * st.t, cbb = Math.cos(ba), sbb = Math.sin(ba);
 	for (t = 0; t < NTR; t++) {
 		if (trFill[t] < 2) continue;
@@ -679,7 +697,7 @@ function drawTracers(cb, sb, ct, st_) {
 		px = ptmp[0]; py = ptmp[1];
 		var R = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i]);
 		var xb = st.x[i] * cbb + st.y[i] * sbb, yb = -st.x[i] * sbb + st.y[i] * cbb;
-		var captured = Math.abs(xb) > 1.5 * Math.abs(yb) && R < 1.8;
+		var captured = Math.abs(yb) > 1.5 * Math.abs(xb) && R < 1.8;
 		ctx.strokeStyle = captured ? '#51f08a' : '#ffd54a';
 		ctx.beginPath();
 		ctx.arc(px, py, captured ? 6 : 4, 0, 6.2832);

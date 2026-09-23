@@ -1,14 +1,17 @@
 /* Headless smoke run of archive/simple-friction-field-webGL.html with a stub
  * WebGL2 context + DOM. Catches syntax errors, uniform locations the shader
- * never declares, and the "Colorize" toggle (the slow-field dots must switch
- * from one fixed hue to a strength ramp on a denser instanced arc fan).
+ * never declares, the "Slow Field" toggle (instanced arc fan drawn only when
+ * on) and the "Arm Tint" toggle (the DISK shader's uArmTint uniform must flip
+ * 1 -> 0 -> 1 on click: off = the stars inside the slow field lose the pink
+ * highlight and are drawn as plain disk light).
  *
  *   node experiments/smoke-archive-webgl.js        # gate
  *   node experiments/smoke-archive-webgl.js --png  # + preview renders
  *
- * --png replays the captured field instances (VS_FIELD maths + soft sprite, the
- * same additive blend) into experiments/logs/webgl-field-{plain,colorized}.png:
- * the only way to eyeball a GPU feature in a browserless sandbox.
+ * --png replays the captured disk draw (VS_DISK maths on the page's own star
+ * state + soft sprite, additive blend) into experiments/logs/webgl-stars-
+ * {tint,plain}.png: the only way to eyeball a GPU feature in a browserless
+ * sandbox (finding 26). Physics is stepped ~6 tu first so the jam has formed.
  */
 'use strict';
 var fs = require('fs'), path = require('path'), zlib = require('zlib'), L = require('./lib.js');
@@ -30,8 +33,8 @@ function decls(src, kw) {
 }
 
 var log = {
-	missing: [], state: {}, states: [], loc: {}, prog: null, ctx: '', draws: 0,
-	fieldDraws: [],
+	missing: [], state: {}, loc: {}, prog: null, ctx: '', draws: 0,
+	fieldInst: 0, diskDraws: [],
 	set: function(name, v) { log.state[name] = v; }
 };
 
@@ -43,24 +46,17 @@ function fakeGL() {
 	 'TEXTURE_WRAP_S', 'TEXTURE_WRAP_T', 'COMPILE_STATUS', 'LINK_STATUS', 'VERTEX_SHADER',
 	 'FRAGMENT_SHADER', 'ACTIVE_UNIFORMS', 'ACTIVE_ATTRIBUTES'
 	].forEach(function(k, i) { consts[k] = 0x1000 + i; });
-	/* one instanced row of the field fan -> floats at offs/stride of each attrib */
-	function readInst(rec, i, ncomp) {
-		var data = rec.buf.data, base = rec.offs / 4 + i * (rec.stride / 4), out = [], c;
-		for (c = 0; c < ncomp; c++) out.push(data[base + c]);
-		return out;
-	}
-	function captureField(instCount) {
-		var names = log.prog.attribs, va = curVao.attribs, rows = [], i;
-		for (i = 0; i < instCount; i++) {
-			var ph = readInst(va[names.indexOf('aPh')], i, 2);
-			var col = readInst(va[names.indexOf('aCol')], i, 3);
-			var as = readInst(va[names.indexOf('aAS')], i, 2);
-			rows.push({ armPhase: ph[0], thetaOff: ph[1], col: col, alpha: as[0], size: as[1] });
-		}
+	function snapshotState() {
 		var copy = {};
 		for (var k in log.state) copy[k] = log.state[k];
-		log.states.push(copy);
-		log.fieldDraws.push({ inst: instCount, rows: rows, u: copy });
+		return copy;
+	}
+	/* the disk draw: keep the uniforms and the buffers the VAO points at (the
+	 * theta buffer is the page's live typed array, so it reads current state) */
+	function captureDisk(count) {
+		var names = log.prog.attribs, va = curVao.attribs;
+		var th = va[names.indexOf('aTheta')], st = va[names.indexOf('aA')];
+		log.diskDraws.push({ n: count, theta: th.buf.data, stat: st.buf.data, u: snapshotState() });
 	}
 	return Object.assign({}, consts, {
 		createShader: function(t) { return { src: '' }; },
@@ -72,7 +68,8 @@ function fakeGL() {
 		linkProgram: function(p) {
 			p.uniforms = decls(p.src, 'uniform');
 			p.attribs = decls(p.src, 'attribute');
-			p.field = p.uniforms.indexOf('uR0') >= 0;   // only the field program
+			p.field = p.uniforms.indexOf('uR0') >= 0;        // only the field program
+			p.disk = p.uniforms.indexOf('uArmTint') >= 0;    // only the disk program
 		},
 		getProgramParameter: function(p, what) {
 			if (what === consts.ACTIVE_UNIFORMS) return p.uniforms.length;
@@ -93,13 +90,13 @@ function fakeGL() {
 		uniform1i: function(l, v) { log.set(locName[l], v); },
 		uniform2f: function(l, a, b) { log.set(locName[l], a + ',' + b); },
 		uniform3f: function(l, a, b, c) { log.set(locName[l], [a, b, c]); },
-		drawArrays: function() {
+		drawArrays: function(mode, first, count) {
 			log.draws++;
+			if (log.prog.disk) captureDisk(count);
 		},
 		drawArraysInstanced: function(mode, first, count, instCount) {
 			log.draws++;
-			if (!log.prog.field) return;
-			captureField(instCount);
+			if (log.prog.field) log.fieldInst += instCount;
 		},
 		createBuffer: function() { return { data: null }; },
 		bindBuffer: function(t, b) { bound[t] = b; },
@@ -128,11 +125,16 @@ function fakeGL() {
 var gl = fakeGL();
 
 function stubEl(id) {
-	var handlers = {};
+	var handlers = {}, classes = {};
 	return {
 		id: id, value: '0', checked: false, textContent: '', innerHTML: '', hidden: false,
 		style: {}, width: 300, height: 150, dataset: {},
-		classList: { add: function() {}, remove: function() {}, toggle: function() {} },
+		classList: {
+			add: function(c) { classes[c] = true; },
+			remove: function(c) { delete classes[c]; },
+			toggle: function(c, on) { if (on === undefined) on = !classes[c]; if (on) classes[c] = true; else delete classes[c]; },
+			contains: function(c) { return !!classes[c]; }
+		},
 		addEventListener: function(k, fn) { (handlers[k] = handlers[k] || []).push(fn); },
 		fire: function(k) { (handlers[k] || []).forEach(function(fn) { fn({}); }); },
 		getContext: function(name) { log.ctx = name; return gl; },
@@ -162,6 +164,8 @@ try {
 }
 if (log.missing.length) L.fail('uniform used but not declared in its shader: ' + log.missing.join(', '));
 if (log.ctx !== 'webgl2') L.fail('expected a webgl2 context request, got ' + log.ctx);
+/* the arm tint ships ON: the button is marked active in the markup */
+if (html.indexOf('class="btn active" id="btn-tint"') < 0) L.fail('Arm Tint button does not start active');
 
 function frame() {
 	now += 16.7;
@@ -172,77 +176,98 @@ function frame() {
 }
 function sample() {
 	log.draws = 0;
-	log.states.length = 0;
-	log.fieldDraws.length = 0;
+	log.fieldInst = 0;
+	log.diskDraws.length = 0;
 	frame();
-	var hues = [], inst = 0;
-	log.fieldDraws.forEach(function(d) {
-		inst += d.inst;
-		d.rows.forEach(function(r) {
-			var c = r.col.join(',');
-			if (hues.indexOf(c) < 0) hues.push(c);
-		});
-	});
-	return { draws: log.draws, arcs: inst, hues: hues, fieldDraws: log.fieldDraws.slice() };
+	if (log.diskDraws.length !== 1) L.fail('expected one disk draw per frame, got ' + log.diskDraws.length);
+	var d = log.diskDraws[0];
+	return { draws: log.draws, fieldInst: log.fieldInst, tint: d.u.uArmTint, disk: d };
 }
 
+/* let the jam form: 500 frames at the 50 ms clamp = 12.5 sim tu at speed 1 */
 var i;
-for (i = 0; i < 5; i++) frame();
+for (i = 0; i < 500; i++) { now += 50; frame(); }
+
 var hidden = sample();
 els['btn-field'].fire('click');
-var plain = sample();
-els['btn-color'].fire('click');
-var tinted = sample();
-var tintDraws = tinted.fieldDraws;
-els['btn-color'].fire('click');
-var restored = sample();
+var shown = sample();
+els['btn-field'].fire('click');
+var tintOn = sample();
+els['btn-tint'].fire('click');
+var tintOff = sample();
+els['btn-tint'].fire('click');
+var tintBack = sample();
 
-if (hidden.arcs !== 0) L.fail('field hidden but the field program still drew ' + hidden.arcs + ' instances');
-if (plain.hues.length !== 1) L.fail('monochrome field drew ' + plain.hues.length + ' hues: ' + plain.hues.join(' '));
-if (tinted.hues.length < 8) L.fail('colorize drew only ' + tinted.hues.length + ' distinct hues');
-if (tinted.arcs <= plain.arcs) L.fail('colorize fan is not denser: ' + tinted.arcs + ' <= ' + plain.arcs);
-if (tinted.arcs !== 60 * (plain.arcs / 7)) L.fail('expected the 60-arc fan x arm count, got ' + tinted.arcs);
-if (restored.hues.length !== 1 || restored.hues[0] !== plain.hues[0])
-	L.fail('toggling back did not restore the fixed hue');
-console.log('frames ok; field instances/frame plain=' + plain.arcs + ' colorized=' + tinted.arcs +
-	' hues=' + tinted.hues.length + ' (' + tinted.hues[0] + ' .. ' + tinted.hues[tinted.hues.length - 1] + ')');
+if (hidden.fieldInst !== 0) L.fail('field hidden but the field program still drew ' + hidden.fieldInst + ' instances');
+if (shown.fieldInst !== 7 * 2) L.fail('expected 7 arcs x 2 arms when the field is on, got ' + shown.fieldInst);
+if (tintOn.tint !== 1) L.fail('Arm Tint on but uArmTint=' + tintOn.tint);
+if (tintOff.tint !== 0) L.fail('Arm Tint clicked off but uArmTint=' + tintOff.tint);
+if (tintBack.tint !== 1) L.fail('Arm Tint clicked back on but uArmTint=' + tintBack.tint);
+if (els['btn-tint'].classList.contains('active') !== true) L.fail('Arm Tint button state out of sync');
 
-/* ---- optional preview renders: replay the captured field instances ---- */
-function renderPng(label, draws) {
+/* Replay VS_DISK's colour law on the captured state: with the tint on, the
+ * stars inside the field (D > 0.4) must come out pink; with it off, every
+ * star must come out the plain disk hue. This checks the shader text the page
+ * ships, not a re-implementation of the toggle. */
+var PINK = [1.0, 0.54902, 0.78431], PLAIN = [0.70588, 0.82353, 1.0];
+function starColorAlpha(d, i, out) {
+	var u = d.u, th = d.theta[i], r0 = d.stat[i * 6], eu = d.stat[i * 6 + 1], peri = d.stat[i * 6 + 2], br = d.stat[i * 6 + 3];
+	var rho = r0 * (1 + u.uEccMax * eu * Math.cos(th - peri));
+	var dth = th - (Math.log(rho) / u.uTanPitch + u.uPatternPhase);
+	dth = ((dth % u.uArmOffset) + u.uArmOffset) % u.uArmOffset;
+	if (dth > u.uArmOffset * 0.5) dth -= u.uArmOffset;
+	var D = Math.exp(-dth * dth * u.uInv2Sig2);
+	var inArm = D > 0.4 ? 1 : 0, tint = u.uArmTint;
+	var b = br * (0.4 + 1 * 0.6);                       // ps = 1 (face-on replay)
+	var aTint = inArm ? D * b : (1 - D) * b * 0.8;
+	out.inArm = inArm;
+	out.col = inArm * tint > 0.5 ? PINK : PLAIN;
+	out.alpha = b * 0.8 + (aTint - b * 0.8) * tint;
+	out.rho = rho; out.th = th;
+	return out;
+}
+function countArmPink(d) {
+	var o = {}, n = 0, arm = 0, pink = 0;
+	for (var k = 0; k < d.n; k++) {
+		starColorAlpha(d, k, o);
+		n++;
+		if (o.inArm) arm++;
+		if (o.col === PINK) pink++;
+	}
+	return { n: n, arm: arm, pink: pink };
+}
+var cOn = countArmPink(tintOn.disk), cOff = countArmPink(tintOff.disk);
+if (cOn.arm < 0.05 * cOn.n) L.fail('too few stars inside the field after the warm-up: ' + cOn.arm + '/' + cOn.n);
+if (cOn.pink !== cOn.arm) L.fail('tint on: pink stars ' + cOn.pink + ' != in-field stars ' + cOn.arm);
+if (cOff.pink !== 0) L.fail('tint off: ' + cOff.pink + ' stars still pink');
+console.log('frames ok; field instances hidden=' + hidden.fieldInst + ' shown=' + shown.fieldInst +
+	'; disk stars=' + cOn.n + ' in-field=' + cOn.arm + ' (' + (100 * cOn.arm / cOn.n).toFixed(1) +
+	'%) pink on/off=' + cOn.pink + '/' + cOff.pink);
+
+/* ---- optional preview renders: replay the captured disk draw face-on ---- */
+function renderPng(label, d) {
 	var W = global.innerWidth, H = global.innerHeight, fb = new Float32Array(W * H * 3);
-	var CAM = 12, NS = 1500, x, y, k, o, c, nArcs = 0;
+	var x, y, k, o, c, out = {}, scale = d.u.uScale;   // uScale already carries zoom*DPR
 	for (o = 0; o < W * H * 3; o += 3) { fb[o] = 0.016; fb[o + 1] = 0.008; fb[o + 2] = 0.031; }
-	draws.forEach(function(d) {
-		var u = d.u;
-		d.rows.forEach(function(row) {
-			nArcs++;
-			var col = row.col;
-			for (k = 0; k < NS; k++) {
-				var t = k / (NS - 1), r = u.uR0 + (u.uR1 - u.uR0) * t;
-				var bt = Math.log(r) / u.uTanPitch + u.uPatternPhase + row.armPhase + row.thetaOff;
-				var px = r * Math.cos(bt), py = r * Math.sin(bt);
-				var rx = px * u.uCosR - py * u.uSinR, ry = px * u.uSinR + py * u.uCosR;
-				var ps = CAM / (CAM + ry * u.uSinT);
-				var sx = rx * u.uScale * ps, sy = ry * u.uCosT * u.uScale * ps, rad = row.size * u.uPtScale * 0.5;
-				var a = row.alpha * Math.min(1, t / 0.02) * (1 - Math.min(1, Math.max(0, (t - 0.96) / 0.04)));
-				var x0 = Math.max(0, Math.floor(W / 2 + sx - rad)), x1 = Math.min(W - 1, Math.ceil(W / 2 + sx + rad));
-				var y0 = Math.max(0, Math.floor(H / 2 + sy - rad)), y1 = Math.min(H - 1, Math.ceil(H / 2 + sy + rad));
-				for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
-					var dx = (x - (W / 2 + sx)) / rad, dy = (y - (H / 2 + sy)) / rad;
-					var r2 = dx * dx + dy * dy;
-					if (r2 > 1) continue;                       // FS_FIELD: discard outside sprite
-					var w = Math.exp(-r2 * 4) * a;              // FS_FIELD falloff x additive blend
-					o = (y * W + x) * 3;
-					for (c = 0; c < 3; c++) fb[o + c] += col[c] * w;
-				}
-			}
-		});
-	});
+	for (k = 0; k < d.n; k++) {
+		starColorAlpha(d, k, out);
+		var px = out.rho * Math.cos(out.th), py = out.rho * Math.sin(out.th);
+		var sx = W / 2 + px * scale, sy = H / 2 + py * scale, rad = 4;
+		var x0 = Math.max(0, Math.floor(sx - rad)), x1 = Math.min(W - 1, Math.ceil(sx + rad));
+		var y0 = Math.max(0, Math.floor(sy - rad)), y1 = Math.min(H - 1, Math.ceil(sy + rad));
+		for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
+			var dx = (x - sx) / rad, dy = (y - sy) / rad, r = Math.sqrt(dx * dx + dy * dy);
+			if (r > 1) continue;                                   // FS_POINT: discard outside sprite
+			var a = r < 0.5 ? 1 - 0.6 * r * 2 : 0.4 * (1 - (r * 2 - 1));   // FS_POINT falloff
+			o = (y * W + x) * 3;
+			for (c = 0; c < 3; c++) fb[o + c] += out.col[c] * out.alpha * a * 0.35;
+		}
+	}
 	var stride = W * 3 + 1, raw = Buffer.alloc(H * stride), p = 0;
 	for (y = 0; y < H; y++) {
 		raw[p++] = 0;
 		for (x = 0; x < W; x++) for (c = 0; c < 3; c++) {
-			var v = fb[(y * W + x) * 3 + c] / 0.6, m = v / (v + 1);   // soft clip, same as the glow
+			var v = fb[(y * W + x) * 3 + c], m = v / (v + 1);   // soft clip
 			raw[p++] = Math.round(255 * Math.pow(m, 1 / 2.2));
 		}
 	}
@@ -258,22 +283,22 @@ function renderPng(label, draws) {
 		return (crc ^ 0xFFFFFFFF) >>> 0;
 	}
 	function chunk(type, data) {
-		var len = Buffer.alloc(4), body = Buffer.concat([Buffer.from(type, 'ascii'), data]), c = Buffer.alloc(4);
+		var len = Buffer.alloc(4), body = Buffer.concat([Buffer.from(type, 'ascii'), data]), cb = Buffer.alloc(4);
 		len.writeUInt32BE(data.length);
-		c.writeUInt32BE(crc32(body));
-		return Buffer.concat([len, body, c]);
+		cb.writeUInt32BE(crc32(body));
+		return Buffer.concat([len, body, cb]);
 	}
 	var ihdr = Buffer.alloc(13);
 	ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2;
-	var out = path.join(__dirname, 'logs', 'webgl-field-' + label + '.png');
-	fs.mkdirSync(path.dirname(out), { recursive: true });
-	fs.writeFileSync(out, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+	var file = path.join(__dirname, 'logs', 'webgl-stars-' + label + '.png');
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
 		chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
-	console.log('wrote ' + path.relative(process.cwd(), out) + ' (' + nArcs + ' arcs)');
+	console.log('wrote ' + path.relative(process.cwd(), file) + ' (' + d.n + ' stars, uArmTint=' + d.u.uArmTint + ')');
 }
 if (WANT_PNG) {
-	renderPng('plain', plain.fieldDraws);
-	renderPng('colorized', tintDraws);
+	renderPng('tint', tintOn.disk);
+	renderPng('plain', tintOff.disk);
 }
 
-L.pass('smoke-archive-webgl: page runs, Colorize recolors the slow-field dots');
+L.pass('smoke-archive-webgl: page runs, Arm Tint toggles the in-field star colour');

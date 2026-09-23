@@ -293,3 +293,30 @@ N=40k) even though its law was "aligned with the crest". Measure the map's
 output signature (amp AND phase, per annulus) before reasoning about
 co-location or "which phase it lands on"; the map's geometry is part of the
 seeding.
+
+## 29. "Crest" phase references: name the hill or the well, and audit against the potential itself
+
+Every m=2 phasor in this repo is measured against `ref = Om*t + p*L(R)` and the
+scripts, comments and the S2 seeder all called that azimuth "the crest". It is
+the potential HILL: both mode terms are `+A*cos(2*(phi - ref))` with `A > 0`,
+so the trough (the arm) is 90 deg away in azimuth = pi in the phasor. The
+"~pi offset of the inner response" recorded in 0.4.1 was therefore the
+in-phase forced response inside corotation - stars crest in the well, exactly
+where a Hamiltonian disk should crest - and not a physics anomaly. Cheap and
+decisive method (`experiments/check-arm-phase.js`): (a) brute-force scan phi
+of `potential()` at a few R and print hill/well offsets from the reference,
+before any star is looked at; (b) report response phases relative to the WELL,
+per class, in narrow annuli, coherent-window averaged; (c) apply the seeding
+routine alone and measure its own phasor. Traps this exposed: the S2/S2b
+seeder placed apocenters on the hill (25-35 deg from the well after the map
+rotation of finding 28) while the disk's own response sits at 0 deg from the
+well - the forcing relocks the inner seed anyway (settle amp within 4% either
+way), but the S2b boundary seed, which nothing relocks, landed 83-88 deg from
+the well and cancelled part of the young response (this is the "partially
+cancelling phase" of finding 28); seeding at the well (`P.alignPhase = pi/2`)
+turned the S2b settle outer A2 from 0.073 into 0.172 with the inner steady
+state unchanged. The page's "bar-captured" tracer test used the hill axis and
+flagged stars on the bar's depleted minor axis (374 vs 570 on the well axis).
+`alignEpicycles` also carried two dead "crest-pointing unit vector" locals.
+Rule: when a phase looks like "pi off", check the sign convention of the
+forcing term against the measured phasor BEFORE reasoning about dynamics.

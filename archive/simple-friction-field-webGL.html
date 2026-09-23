@@ -247,7 +247,7 @@
           <div class="control-label"><span>Visualize</span></div>
           <div class="btn-row">
             <button class="btn" id="btn-field">Slow Field</button>
-            <button class="btn" id="btn-color" title="Colorize the field dots by local field strength (slow = hot)">Colorize</button>
+            <button class="btn active" id="btn-tint" title="Tint the stars inside the slow field pink. Off: every disk star keeps the plain disk colour, so only the density jam itself shows the arms">Arm Tint</button>
             <button class="btn" id="btn-trails">Trails</button>
             <button class="btn" id="btn-reset">Reset View</button>
           </div>
@@ -265,7 +265,7 @@
   </div>
 
   <div class="hud hud-bottom">
-    Drag to rotate · Scroll to zoom · Slow zones create traffic jams of stars · Colorize = field strength
+    Drag to rotate · Scroll to zoom · Slow zones create traffic jams of stars · Arm Tint off = jam only, no colour cue
   </div>
 
   <div id="glfail">
@@ -293,9 +293,10 @@
        the default framebuffer like Canvas2D's source-over fill).
      - "Slow Field" spiral curves are drawn as dense additive dots
        along log-spiral arcs (gl.lineWidth is capped at 1 in ES).
-     - "Colorize" switches those dots from the fixed hue to a strength
-       ramp (weak/fast indigo -> crest-core warm white) on a denser fan,
-       so the Gaussian damping profile is readable as a heat ribbon.
+     - "Arm Tint" is the star highlight inside the slow field (pink,
+       alpha following the field strength D). Off = every disk star is
+       drawn the same, so the arms you still see are the traffic jam
+       itself (the density the damping builds), not a colour cue.
      ============================================================ */
 
   const TAU = Math.PI * 2;
@@ -392,68 +393,27 @@
   const fieldT = new Float32Array(FIELD_SAMPLES);    // 0..1 param along each spiral arc
   for (let i = 0; i < FIELD_SAMPLES; i++) fieldT[i] = i / (FIELD_SAMPLES - 1);
 
-  // Slow-field ridge fan: arcs offset in theta across the Gaussian profile
-  // D = exp(-off^2 / sigma_sq2) that the physics uses. Monochrome mode draws the
-  // shipped 7 arcs; colorize mode samples a denser 25-arc fan so the strength
-  // ramp reads as a gradient rather than 7 ribbons (gains matched so both modes
-  // add up to roughly the same light).
-  const FIELD_WING = 0.36;                           // theta span drawn each side
-  const FAN_MAX = 60;
+  // Slow-field ridge: the crest arc plus 3 arcs each side, offset in theta and
+  // dimmed by the same Gaussian D = exp(-off^2 / sigma_sq2) the physics uses.
+  const FAN_N = 7;
   const ARMS_MAX = 5;
-  const fanOff = new Float32Array(FAN_MAX);
-  const fanAlpha = new Float32Array(FAN_MAX);
-  const fanSize = new Float32Array(FAN_MAX);
-  const fanD = new Float32Array(FAN_MAX);            // field strength at that offset
-  let fanN = 0;
+  const fanOff = new Float32Array(FAN_N);
+  const fanAlpha = new Float32Array(FAN_N);
+  const fanSize = new Float32Array(FAN_N);
+  fanOff[0] = 0; fanAlpha[0] = 0.5; fanSize[0] = 4.5;
+  for (let i = -3, k = 1; i <= 3; i++) {
+    if (i === 0) continue;
+    const off = i * 0.12;
+    fanOff[k] = off; fanAlpha[k] = Math.exp(-(off * off) / SIGMA_SQ2) * 0.4 * 0.5; fanSize[k] = 3.0;
+    k++;
+  }
 
-  // One instanced draw covers the whole fan: per-instance row is
-  // [armPhase, thetaOff, r, g, b, alpha, size]. Rebuilt only when the fan
-  // (colorize toggle) or the arm count changes — never per frame.
-  const INST_STRIDE = 7;
-  const fieldInst = new Float32Array(FAN_MAX * ARMS_MAX * INST_STRIDE);
+  // One instanced draw covers all arms x arcs: per-instance row is
+  // [armPhase, thetaOff, alpha, size]. Rebuilt only when the arm count
+  // changes — never per frame.
+  const INST_STRIDE = 4;
+  const fieldInst = new Float32Array(FAN_N * ARMS_MAX * INST_STRIDE);
   let instN = 0, instDirty = true;
-
-  function buildFan(colorize) {
-    fanN = 0;
-    if (!colorize) {
-      fanOff[fanN] = 0; fanAlpha[fanN] = 0.5; fanSize[fanN] = 4.5; fanD[fanN] = 1; fanN++;
-      for (let i = -3; i <= 3; i++) {
-        if (i === 0) continue;
-        const off = i * 0.12;
-        const d = Math.exp(-(off * off) / SIGMA_SQ2);
-        fanOff[fanN] = off; fanAlpha[fanN] = d * 0.4 * 0.5; fanSize[fanN] = 3.0; fanD[fanN] = d; fanN++;
-      }
-      instDirty = true;
-      return;
-    }
-    const gain = 0.4 * 0.5 / 7;                      // per-arc light of the coarse fan
-    for (let k = 0; k < FAN_MAX; k++) {
-      const off = (k / (FAN_MAX - 1) * 2 - 1) * FIELD_WING;
-      const d = Math.exp(-(off * off) / SIGMA_SQ2);
-      fanOff[fanN] = off; fanAlpha[fanN] = d * gain; fanSize[fanN] = 7.0; fanD[fanN] = d; fanN++;
-    }
-    instDirty = true;
-  }
-  buildFan(false);
-
-  // Strength -> hue ramp for colorize mode: weak (fast) field is deep indigo,
-  // mid is the field's own magenta, and only the narrow crest core goes warm —
-  // so the Gaussian damping profile reads as the temperature of the ribbon.
-  const RAMP_D = [0.12, 0.55, 0.80, 0.97];
-  const RAMP_C = [[0.20, 0.26, 1.0], [1.0, 0.16, 0.60], [1.0, 0.52, 0.86], [1.0, 0.93, 0.72]];
-  const FIELD_HUE = [1.0, 0.31373, 0.58824];
-  const fieldColor = [0, 0, 0];
-  function rampColor(d, out) {
-    let i = RAMP_D.length - 2;
-    while (i > 0 && d < RAMP_D[i]) i--;
-    const a = RAMP_C[i], b = RAMP_C[i + 1];
-    const u = (d - RAMP_D[i]) / (RAMP_D[i + 1] - RAMP_D[i]);
-    const t = u < 0 ? 0 : u > 1 ? 1 : u;
-    out[0] = a[0] + (b[0] - a[0]) * t;
-    out[1] = a[1] + (b[1] - a[1]) * t;
-    out[2] = a[2] + (b[2] - a[2]) * t;
-    return out;
-  }
 
   // ======== STATE ========
   let speed = 1.0;
@@ -468,7 +428,7 @@
   let armCount = 0;
 
   let showField = false;
-  let showFieldColor = false;
+  let armTint = true;      // pink highlight of stars inside the slow field
   let showTrails = false;
 
   let rotZ = 0;
@@ -549,6 +509,9 @@
   // Disk star: eccentric orbit + density-wave tint computed entirely on GPU.
   // Orbit: rho = r0 * (1 + eccMax * u * cos(theta - peri)) — a fixed closed curve
   // with radial excursion up to ±eccMax, random orientation per star.
+  // uArmTint 1 = stars inside the field (D > 0.4) drawn pink with alpha D*b;
+  // 0 = every star drawn as plain disk light at the same alpha law, so the
+  // arms are carried by the density jam alone.
   const VS_DISK = `
     precision highp float;
     attribute float aTheta;
@@ -557,7 +520,7 @@
     uniform float uCosR, uSinR, uCosT, uSinT;
     uniform float uScale, uHalfW, uHalfH, uCamDist;
     uniform float uTanPitch, uPatternPhase, uArmOffset, uInv2Sig2, uEccMax;
-    uniform float uPointSize;
+    uniform float uPointSize, uArmTint;
     varying vec3 vColor;
     varying float vAlpha;
     void main() {
@@ -578,9 +541,10 @@
       if (dth > uArmOffset * 0.5) dth -= uArmOffset;
       float D = exp(-dth * dth * uInv2Sig2);
       float b = aA.w * (0.4 + ps * 0.6);
-      float arm = step(0.4, D);
-      vColor = mix(vec3(0.70588, 0.82353, 1.0), vec3(1.0, 0.54902, 0.78431), arm);
-      vAlpha = mix((1.0 - D) * b * 0.8, D * b, arm);
+      float inArm = step(0.4, D);
+      vColor = mix(vec3(0.70588, 0.82353, 1.0), vec3(1.0, 0.54902, 0.78431), inArm * uArmTint);
+      float aTint = mix((1.0 - D) * b * 0.8, D * b, inArm);
+      vAlpha = mix(b * 0.8, aTint, uArmTint);
     }`;
 
   // Bulge star: tilted eccentric orbits, per-star node + inclination
@@ -618,13 +582,12 @@
     }`;
 
   // Slow-field visualization: log-spiral arcs rendered as soft additive dots,
-  // one instanced draw. Per-instance attributes carry the arm phase, the fan's
-  // theta offset and the colorize strength ramp (or the fixed hue).
+  // one instanced draw. Per-instance attributes carry the arm phase, the arc's
+  // theta offset and its alpha/size.
   const VS_FIELD = `
     precision highp float;
     attribute float aT;
     attribute vec2 aPh;       // armPhase, thetaOff (per instance)
-    attribute vec3 aCol;      // ramp or fixed hue (per instance)
     attribute vec2 aAS;       // alpha, size (per instance)
     uniform float uCosR, uSinR, uCosT, uSinT;
     uniform float uScale, uHalfW, uHalfH, uCamDist;
@@ -645,7 +608,7 @@
       gl_Position = vec4(screen.x / uHalfW, -screen.y / uHalfH, 0.0, 1.0);
       gl_PointSize = aAS.y * uPtScale;
       float edge = smoothstep(0.0, 0.02, aT) * (1.0 - smoothstep(0.96, 1.0, aT));
-      vColor = aCol;
+      vColor = vec3(1.0, 0.31373, 0.58824);
       vAlpha = aAS.x * edge;
     }`;
 
@@ -774,8 +737,7 @@
     makeVAO(progField, [
       ['aT', 1, fieldTBuf],
       ['aPh', 2, fieldInstBuf, 4 * INST_STRIDE, 0, 1],
-      ['aCol', 3, fieldInstBuf, 4 * INST_STRIDE, 8, 1],
-      ['aAS', 2, fieldInstBuf, 4 * INST_STRIDE, 20, 1]
+      ['aAS', 2, fieldInstBuf, 4 * INST_STRIDE, 8, 1]
     ]);
     makeVAO(progBg, [['aQuad', 2, quadBuf]]);
     makeVAO(progPresent, [['aQuad', 2, quadBuf]]);
@@ -789,16 +751,12 @@
     let n = 0;
     for (let arm = 0; arm < num_arms; arm++) {
       const armPhase = arm * arm_offset;
-      for (let k = 0; k < fanN; k++) {
-        const c = showFieldColor ? rampColor(fanD[k], fieldColor) : FIELD_HUE;
+      for (let k = 0; k < FAN_N; k++) {
         const o = n * INST_STRIDE;
         fieldInst[o] = armPhase;
         fieldInst[o + 1] = fanOff[k];
-        fieldInst[o + 2] = c[0];
-        fieldInst[o + 3] = c[1];
-        fieldInst[o + 4] = c[2];
-        fieldInst[o + 5] = fanAlpha[k];
-        fieldInst[o + 6] = fanSize[k];
+        fieldInst[o + 2] = fanAlpha[k];
+        fieldInst[o + 3] = fanSize[k];
         n++;
       }
     }
@@ -941,9 +899,10 @@
     gl.uniform1f(u.uTanPitch, tan_pitch);
     gl.uniform1f(u.uPatternPhase, pattern_phase);
     gl.uniform1f(u.uArmOffset, arm_offset);
-    gl.uniform1f(u.uInv2Sig2, 8.0); // 1 / (2 * 0.25^2)
+    gl.uniform1f(u.uInv2Sig2, INV_SIGMA_SQ2);
     gl.uniform1f(u.uEccMax, ecc_max);
     gl.uniform1f(u.uPointSize, 8 * DPR);
+    gl.uniform1f(u.uArmTint, armTint ? 1 : 0);
     gl.drawArrays(gl.POINTS, 0, N_DISK);
   }
 
@@ -1082,15 +1041,10 @@
     showField = !showField;
     btnField.classList.toggle('active', showField);
   });
-  const btnColor = document.getElementById('btn-color');
-  btnColor.addEventListener('click', () => {
-    showFieldColor = !showFieldColor;
-    btnColor.classList.toggle('active', showFieldColor);
-    if (showFieldColor) {                 // colorizing without the field drawn shows nothing
-      showField = true;
-      btnField.classList.add('active');
-    }
-    buildFan(showFieldColor);
+  const btnTint = document.getElementById('btn-tint');
+  btnTint.addEventListener('click', () => {
+    armTint = !armTint;
+    btnTint.classList.toggle('active', armTint);
   });
   const btnTrails = document.getElementById('btn-trails');
   btnTrails.addEventListener('click', () => {

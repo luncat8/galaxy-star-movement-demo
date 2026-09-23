@@ -2,7 +2,9 @@
  * the settle boundary to T=150 (archive/0.4.1-plan.md).
  *
  *   node experiments/check-transient.js [gfb:split ...]   default: 0:0 0:3
- *   env: NSTARS (10000), SEED, ALIGN (1), TMAX (150)
+ *   env: NSTARS (10000), SEED, ALIGN (1), TMAX (150), PHASE (seed azimuth in
+ *   deg from the potential hill, overrides P.alignPhase: 90 = well = shipping
+ *   since 0.4.2, 0 = the 0.4.1 hill seed; check-arm-phase.js)
  *
  * Default is the shipping A/B gate (legacy twin vs S2b). The mechanism study
  * ran 0:0 25:0 50:0 0:3 at NSTARS=10000 and 40000 (see
@@ -34,6 +36,7 @@ var L = require('./lib.js'), Galaxy = L.Galaxy;
 var NSTARS = parseInt(process.env.NSTARS || '10000', 10);
 var SEED = process.env.SEED ? parseInt(process.env.SEED, 10) : 0;
 var ALIGN = process.env.ALIGN === undefined ? 1 : parseFloat(process.env.ALIGN);
+var PHASE = process.env.PHASE !== undefined ? parseFloat(process.env.PHASE) * Math.PI / 180 : undefined;
 var DT = 0.01, SAMPLE = 2, TMAX = process.env.TMAX ? parseFloat(process.env.TMAX) : 150;
 var T0 = 30, SUB = Math.round(SAMPLE / DT);
 var NS = Math.round((TMAX - T0) / SAMPLE) + 1;      /* 61 at TMAX=150 */
@@ -62,6 +65,7 @@ function makeRun(sp) {
 	P.live.gfb = sp.gfb;
 	P.align = ALIGN;
 	P.alignSplit = sp.split;
+	if (PHASE !== undefined) P.alignPhase = PHASE;
 	var st = Galaxy.createState(NSTARS);
 	st.n = NSTARS;
 	Galaxy.initStars(st, P, SEED || P.seed);
@@ -270,7 +274,7 @@ specs.forEach(function(sp) {
 	runs.push(summary);
 
 	console.log(sp.tag + '  N=' + NSTARS + ' align=' + ALIGN + ' alignSplit=' + sp.split +
-		'  (~' + summary.secs.toFixed(0) + 's)');
+		' alignPhase=' + (P.alignPhase * 180 / Math.PI).toFixed(0) + 'deg  (~' + summary.secs.toFixed(0) + 's)');
 	var ser = '', serWY = '';
 	for (s = 0; s < NS; s++) {
 		ser += a2Arr[s].toFixed(2) + (armedArr[s] ? '*' : ' ');

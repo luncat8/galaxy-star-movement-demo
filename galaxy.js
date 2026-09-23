@@ -36,7 +36,13 @@ function defaultParams() {
 		 * relocks the seeding during settle, outside it shears - so the outer
 		 * part is seeded at the settle boundary, not at t=0. <= 0 = legacy
 		 * all-at-t=0 seeding. */
-		alignSplit: 3.0
+		alignSplit: 3.0,
+		/* Seed apocenter azimuth, measured from the reference azimuth
+		 * Om*t + p*L(R). That reference is the potential HILL (both m=2 terms
+		 * are +A*cos); the disk's forced arms crest in the WELL, 90 deg on
+		 * (experiments/check-arm-phase.js), so the seed goes there. 0 = the
+		 * 0.3.0-0.4.1 hill-aligned seed (bit-identical legacy). */
+		alignPhase: Math.PI / 2
 	};
 }
 
@@ -657,22 +663,24 @@ function foldPrograde(st, i) {
 }
 
 /* S2: nudge disk stars onto epicyclic ellipses whose major axes lie along the
- * spiral crest phi_spiral(R) (same winding law as the potential, pattern
- * frame). For each thin/young/thick star we apply a small (dR, dvR, dvp)
- * perturbation: radial shift outward near crests, inward near troughs (so
- * orbits compress at the apocenter side = arm); matching epicyclic velocity
- * puts the star on a near-closed ellipse. Random dispersions are preserved.
- * Only stars with rlo <= R <= rhi are touched, so the same routine seeds the
- * relocked inner disk at t=0 and the shearing outer disk at the settle
- * boundary (S2b): inside the split the forcing relocks the alignment during
- * the settle; outside it nothing holds it and it shears over ~20-70 tu
- * (curve-precession.js t_decorr) - an honest transient unwind, not a render
- * fake. The crest is evaluated at the CURRENT pattern phase Om*t + p*L, which
- * matters at the boundary (t=30) and reduces to the t=0 law in initStars. */
+ * spiral winding law phi_spiral(R) = Om*t + p*L(R) + alignPhase (same law as
+ * the potential, pattern frame). For each thin/young/thick star we apply a
+ * small (dR, dvR, dvp) perturbation: radial shift outward near the seed
+ * azimuth, inward 90 deg away (so orbits compress at the apocenter side);
+ * matching epicyclic velocity puts the star on a near-closed ellipse. Random
+ * dispersions are preserved. Only stars with rlo <= R <= rhi are touched, so
+ * the same routine seeds the relocked inner disk at t=0 and the shearing outer
+ * disk at the settle boundary (S2b): inside the split the forcing relocks the
+ * alignment during the settle; outside it nothing holds it and it shears over
+ * ~20-70 tu (curve-precession.js t_decorr) - an honest transient unwind, not a
+ * render fake. The law is evaluated at the CURRENT pattern phase Om*t + p*L,
+ * which matters at the boundary (t=30) and reduces to the t=0 law in
+ * initStars. Note the reference azimuth is the potential HILL; the disk's own
+ * arms crest in the well (check-arm-phase.js), see P.alignPhase. */
 function alignEpicycles(st, P, rlo, rhi) {
 	if (!P.align) return;
 	var n = st.n, i;
-	var p = spiralP(P), r1 = P.spiral.r1;
+	var p = spiralP(P), r1 = P.spiral.r1, ph0 = P.alignPhase || 0;
 	var r1lo = r1 - 0.3, r1hi = r1 + 0.3;
 	for (i = 0; i < n; i++) {
 		var c = st.cls[i];
@@ -681,7 +689,7 @@ function alignEpicycles(st, P, rlo, rhi) {
 		var vxi = st.vx[i], vyi = st.vy[i];
 		var R2 = xi * xi + yi * yi, R = Math.sqrt(R2);
 		if (R < Math.max(0.3, rlo) || R > Math.min(7, rhi)) continue;
-		/* Crest azimuth phi_spiral(R) at the seeding instant (inertial frame). */
+		/* Seed azimuth phi_spiral(R) at the seeding instant (inertial frame). */
 		var L, lx, lr, lg;
 		if (R <= r1lo) L = 0;
 		else if (R >= r1hi) L = Math.log(R / r1);
@@ -689,7 +697,7 @@ function alignEpicycles(st, P, rlo, rhi) {
 			lx = (R - r1lo) / (r1hi - r1lo); lr = Math.log(R / r1);
 			lg = lx * lx * (3 - 2 * lx); L = lg * lr;
 		}
-		var phiC = P.spiral.om * st.t + p * L;
+		var phiC = P.spiral.om * st.t + p * L + ph0;
 		/* Class multiplier: cold young disk is left alone (alignYoung=0) — its own
 		 * linear response already carries arms past R=4 (amp 0.4-0.86); crest-phase
 		 * seeding on top was measured to fight it (young outer amp drops to 0.20).
@@ -699,21 +707,19 @@ function alignEpicycles(st, P, rlo, rhi) {
 		if (e <= 0.003) continue;
 		var a = e * R; /* radial epicycle amplitude */
 		var phi = Math.atan2(yi, xi);
-		/* Nearest of the two m=2 crests: chi in [-pi/2, pi/2]. phiC carries the
-		 * full pattern phase, so wrap dphi negative-safe before folding. */
+		/* Nearest of the two m=2 seed azimuths: chi in [-pi/2, pi/2]. phiC
+		 * carries the full pattern phase, so wrap dphi negative-safe before
+		 * folding. */
 		var dphi = phi - phiC;
 		dphi = ((dphi + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
 		if (dphi > Math.PI / 2) dphi -= Math.PI;
 		else if (dphi < -Math.PI / 2) dphi += Math.PI;
 		var ca = Math.cos(dphi), sa = Math.sin(dphi);
-		/* Crest-pointing unit vector (points toward nearest arm direction). */
-		var cam = Math.cos(phiC + (Math.abs(phi - phiC) > Math.PI / 2 + 1e-6 ? Math.PI : 0));
-		var sam = Math.sin(phiC + (Math.abs(phi - phiC) > Math.PI / 2 + 1e-6 ? Math.PI : 0));
-		/* Radial shift dR = a*ca: moves star outward if near crest (ca>0), inward
-		 * if near trough (ca<0). Compresses azimuthal spacing on the crest side
-		 * where orbits crowd (apocenter pile-up). Shift along the radial direction
-		 * at the star's current azimuth, NOT along the crest vector, to preserve
-		 * approximate angle and avoid azimuthal translation. */
+		/* Radial shift dR = a*ca: moves star outward near the seed azimuth
+		 * (ca>0), inward 90 deg away (ca<0). Compresses azimuthal spacing on the
+		 * apocenter side where orbits crowd. Shift along the radial direction at
+		 * the star's current azimuth to preserve approximate angle and avoid
+		 * azimuthal translation. */
 		var cf = xi / R, sf = yi / R;
 		var dR = a * ca;
 		var nR = R + dR;
