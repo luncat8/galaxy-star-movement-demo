@@ -200,3 +200,71 @@ A batch `P.align = 0;` insert left one copy at top level of check-jacobi.js
 (`P` undefined there) — committed with the gate crashing. Any param-plumbing
 sweep across experiments/ must end with a full `for f in check-*.js; do node
 $f; done` before commit; a red suite is part of the diff.
+
+## 22. A density crest must ADD a potential well — mind the feedback phase
+
+Measuring an m=2 moment as `A e^{i psi}` puts its crest where `2(phi - psi) = 0`.
+Writing the force as `cos(2(phi - psi) - theta)` with `theta = psi` places the
+potential crest ON the density crest, i.e. the feedback REPELS its own arms.
+Symptom found the hard way: median R drifts UP (x1.075) and an artificial hole
+opens exactly where the arms were. Store `theta = psi + pi` (the well sits at
+the crest) and verify on the state the table was built from: the table phase
+agrees with an independent moment measurement to 0.35 rad, not to pi.
+
+## 23. Outer-disk amplitudes need a coherent (phasor-window) estimator
+
+A single snapshot of an m=2 band at R>4 is shot-noise dominated (band 4.5-5.5,
+N=10k: noise sigma ~0.035 vs signal ~0.036), so per-snapshot comparisons flip
+sign run to run and a study can "find" anything. Metrics that survived:
+
+- amplitude of the MEAN complex phasor over a window (T=75-150): keeps a steady
+  wave, averages incoherent response down by ~sqrt(n);
+- the per-sample median/p80 and a "duty cycle" (fraction of samples above a
+  fixed threshold ~0.08): separates "armed some of the time" from "never armed";
+- always print the per-sample mean next to the coherent amplitude — a coherent
+  amplitude above the per-sample mean is arithmetically impossible and is the
+  fastest way to catch an indexing bug.
+
+Guard both ends: a stride mismatch in the snapshot buffer made a band read the
+previous snapshot's data and produced a "coherent 0.225" out of a band whose
+per-sample mean was 0.038.
+
+## 24. Table-driven potentials: interpolate C1 or the force is not the gradient
+
+If the potential comes from a table (measured profile, FFT grid, etc.) and the
+force is computed analytically, linear interpolation between nodes breaks the
+pair: the value's slope is not the interpolated derivative
+(`d(linear interp)/dR = (a[i+1]-a[i])/dR`, not the average of node slopes), so
+the leapfrog sees a 4e-4 relative inconsistency — 4% of the term's own curvature
+and exactly the class of error finding 1 warns about. Catmull-Rom gives value +
+exact derivative in ~10 ops and made check-gradient pass at 3e-9. Gate the
+diagonal: `accelSingle` (analytic) vs central differences of `potential` on a
+frozen table, 1e-4 relative / 1e-7 absolute.
+
+## 25. Self-gravity feedback amplifies only where the response is coherent
+
+An SCF-lite m=2 feedback (`Phi = gfb * 2 pi G Sigma2 / k`, local WKB, soft
+saturation, tau=4 low-pass on the pattern-frame phasor) is stable and
+phase-coherent at any tested gain (1-50), but its steady-state effect is
++10-12% coherent arm amplitude inside corotation and nothing beyond R~4. Reason:
+the measured outer m=2 moment collapses across OLR (2 pi G Sigma2/k:
+9.1e-3 at R=2.4 -> 1.3e-6 at R=4.5, a 10x drop at OLR alone), so the loop
+amplifies a noise-level moment into a coherent but weak ripple with no resonant
+support. Lesson: before building a closed loop, measure the OPEN-loop signal in
+the same units the loop will use; the feedback cannot create a response that the
+static potential could not.
+
+Also: an SCF-style loop makes the potential time-dependent at fixed pattern
+speed, so the Jacobi/HUD diagnostic must report n/a (like a mode fade), and the
+frozen-table variant (`P.live.freeze`) is the only way to gate the force with an
+invariant.
+
+## 26. WebGL page without a browser: capture draws, replay them into a PNG
+
+For a GPU-only feature (shader colour ramp, additive sprites), stub a WebGL
+context that records uniforms per draw call and replays the vertex-shader maths
+in JS into a Float32 buffer, then encode PNG. It catches real mistakes: the
+first "Colorize" fan (25 arcs) read as stripes instead of a ribbon, and the
+strength->hue ramp needed its warm end restricted to the core (indices
+0.80-0.97) before it read as a heat ribbon. Keep the replay in the gate
+(`--png` flag), not in a scratch file, so the visual evidence stays reproducible.

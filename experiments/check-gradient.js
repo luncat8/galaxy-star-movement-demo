@@ -33,5 +33,43 @@ for (ri = 0; ri < Rs.length; ri++) {
 		}
 	}
 }
-console.log('maxRel=' + maxRel.toExponential(2) + ' maxAbs=' + maxAbs.toExponential(2) + ' worst: ' + worst);
-L.pass('check-gradient analytic vs numeric within 1e-4');
+console.log('static modes: maxRel=' + maxRel.toExponential(2) + ' maxAbs=' + maxAbs.toExponential(2) + ' worst: ' + worst);
+L.pass('check-gradient static modes analytic vs numeric within 1e-4');
+
+/* Live mode force must equal -grad of the live potential, including the
+ * measured dtheta/dR term in the radial wavenumber. Synthetic analytic profile
+ * written straight into the table (freeze), so the check is about the gradient
+ * algebra and the C1 table interpolation, not about the response measurement. */
+(function liveGradient() {
+	var Pl = Galaxy.defaultParams();
+	Pl.align = 0;
+	Pl.bar.g = 0; Pl.spiral.g = 1; Pl.live.gfb = 1;
+	Pl.live.freeze = true;
+	var stl = Galaxy.createState(1);
+	var Lv = stl.live, i, R;
+	for (i = 0; i < Lv.nb; i++) {
+		R = Lv.rc[i];
+		Lv.amp[i] = 0.02 * Math.exp(-(R - 2.5) * (R - 2.5) / 6) + 0.004;
+		Lv.th[i] = -2.5 * R + 0.3 * Math.sin(R);
+	}
+	var o2 = { bar: false, spiral: true, ramp: 1, live: Lv };
+	var t2 = 2.3, h2 = 1e-5, maxRel2 = 0, maxAbs2 = 0, worst2 = '', out2 = [0, 0, 0];
+	var Rs2 = [0.5, 1.1, 2.2, 3.4, 4.6, 5.9], phis2 = [0.2, 1.9, 4.1], zs2 = [0, 0.5];
+	Rs2.forEach(function(RR) { phis2.forEach(function(pp) { zs2.forEach(function(zz) {
+		var X = RR * Math.cos(pp), Y = RR * Math.sin(pp);
+		Galaxy.accelSingle(X, Y, zz, t2, Pl, o2, out2);
+		[
+			[Galaxy.potential(X + h2, Y, zz, t2, Pl, o2), Galaxy.potential(X - h2, Y, zz, t2, Pl, o2), out2[0]],
+			[Galaxy.potential(X, Y + h2, zz, t2, Pl, o2), Galaxy.potential(X, Y - h2, zz, t2, Pl, o2), out2[1]],
+			[Galaxy.potential(X, Y, zz + h2, t2, Pl, o2), Galaxy.potential(X, Y, zz - h2, t2, Pl, o2), out2[2]]
+		].forEach(function(d, dim) {
+			var num = -(d[0] - d[1]) / (2 * h2);
+			var abs = Math.abs(d[2] - num), rel = abs / Math.max(Math.abs(d[2]), 1e-3);
+			if (abs > maxAbs2) maxAbs2 = abs;
+			if (rel > maxRel2) { maxRel2 = rel; worst2 = 'R=' + RR + ' dim=' + dim + ' ana=' + d[2] + ' num=' + num; }
+			if (rel > 1e-4 && abs > 1e-7) L.fail('live grad mismatch ' + worst2 + ' rel=' + rel + ' abs=' + abs);
+		});
+	}); }); });
+	console.log('live mode  : maxRel=' + maxRel2.toExponential(2) + ' maxAbs=' + maxAbs2.toExponential(2) + ' worst: ' + worst2);
+	L.pass('check-gradient live m=2 term analytic vs numeric within 1e-4');
+})();

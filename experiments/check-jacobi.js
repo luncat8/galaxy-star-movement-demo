@@ -76,9 +76,41 @@ function runCombined() {
 	if (d[999] > 0.1) L.fail('combined shadow max ' + d[999].toExponential(2) + ' > 0.1');
 }
 
+/* S5 live mode, frozen: once the measured m=2 profile is fixed (P.live.freeze)
+ * the live potential is a single-pattern field like the spiral, so the Jacobi
+ * integral with om = spiral.om must be conserved. This tests the live FORCE
+ * (including the interpolated dtheta/dR term), not the feedback loop: while the
+ * table updates the patterns do work and no invariant exists. */
+function runLiveFrozen() {
+	var P = Galaxy.defaultParams();
+	P.spiral.om = 0.30; P.spiral.as = 0.06; P.bar.ab = 0; P.bar.g = 0; P.spiral.g = 1;
+	P.live.gfb = 1;
+	var N = 1000, dt = 0.01, T = 60;
+	var st = Galaxy.createState(N);
+	st.n = N;
+	Galaxy.initStars(st, P, P.seed);
+	Galaxy.settle(st, P, Math.round(P.tsettle / P.dtSettle), P.dtSettle, false, true);
+	P.live.freeze = true;
+	var o = { bar: false, spiral: true, ramp: 1, live: st.live };
+	var e0 = new Float64Array(N), i, k, dd = [];
+	for (i = 0; i < N; i++)
+		e0[i] = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, P.spiral.om, o);
+	for (k = 0; k < Math.round(T / dt); k++) Galaxy.step(st, P, dt, false, true);
+	for (i = 0; i < N; i++) {
+		var e1 = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, P.spiral.om, o);
+		dd.push(Math.abs(e1 - e0[i]) / Math.max(Math.abs(e0[i]), 0.3));
+	}
+	dd.sort(function(a, b) { return a - b; });
+	console.log('live-frozen: p99|dEJ|/|EJ|=' + dd[990].toExponential(2) +
+		' max=' + dd[N - 1].toExponential(2) + ' caps=' + st.caps);
+	if (dd[990] > 2e-3) L.fail('live-frozen Jacobi p99 ' + dd[990].toExponential(2) + ' > 2e-3');
+	if (dd[N - 1] > 1e-2) L.fail('live-frozen Jacobi max ' + dd[N - 1].toExponential(2) + ' > 1e-2');
+}
+
 var P0 = Galaxy.defaultParams();
 P0.align = 0;
 runSingle('bar-only', true, false, P0.bar.om);
 runSingle('spiral-only', false, true, P0.spiral.om);
 runCombined();
-L.pass('check-jacobi single-pattern conserved, combined shadow-converged');
+runLiveFrozen();
+L.pass('check-jacobi single-pattern conserved, live-frozen conserved, combined shadow-converged');

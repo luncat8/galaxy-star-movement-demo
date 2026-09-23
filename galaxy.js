@@ -14,6 +14,11 @@ function defaultParams() {
 		halo: { vh2: 0.536, rc: 0.50 },
 		bar: { ab: 0.060, rb: 1.20, hb: 0.30, om: 0.36, g: 1 },
 		spiral: { as: 0.040, rp: 2.80, sig: 0.50, pitch: 15 * Math.PI / 180, r1: 1.00, zs: 0.50, om: 0.36, g: 1 },
+		/* S5 live mode: the disk's own m=2 response is measured in the pattern
+		 * frame and fed back as a WKB self-gravity term (Phi = gfb*2*pi*G*Sig2/k),
+		 * soft-saturated at cap, low-passed with tau. gfb=0 disables it entirely
+		 * (legacy physics, zero cost). */
+		live: { gfb: 0, g: 1, cap: 0.02, tau: 4, zs: 0.6, freeze: false },
 		fade: 8,
 		rmin: 0.02,
 		vmax: 3.0,
@@ -53,14 +58,52 @@ function spiralLD(R, P, out) {
 
 function spiralP(P) { return 1 / Math.tan(P.spiral.pitch); }
 
+/* S5 live-mode grid: cylindrical bins covering the disk, m=2 only. */
+var LIVE_NB = 32, LIVE_RLO = 0.3, LIVE_RHI = 8.0, LIVE_DR = (LIVE_RHI - LIVE_RLO) / LIVE_NB;
+var LIVE_EFOLD = 1.2e-3;   /* column-density e-folding for the data mask */
+var LIVE_LR = 2.0;         /* radial smoothing length of the profile, in bins */
+var LIVE_INVDR = 1 / LIVE_DR;
+var LIVE_EDGE = new Float64Array(LIVE_NB);   /* taper to zero at both grid ends */
+(function buildLiveEdge() {
+	for (var i = 0; i < LIVE_NB; i++)
+		LIVE_EDGE[i] = sstep01((LIVE_RLO + (i + 0.5) * LIVE_DR - LIVE_RLO) / 0.5) *
+			sstep01((LIVE_RHI - 0.4 - (LIVE_RLO + (i + 0.5) * LIVE_DR)) / 1.2);
+})();
+
+function sstep01(x) {
+	if (x <= 0) return 0;
+	if (x >= 1) return 1;
+	return x * x * (3 - 2 * x);
+}
+
 function createState(nmax) {
+	var nb = LIVE_NB, i, rlo = LIVE_RLO, dr = LIVE_DR, area = new Float64Array(nb), rc = new Float64Array(nb);
+	for (i = 0; i < nb; i++) {
+		rc[i] = rlo + (i + 0.5) * dr;
+		area[i] = Math.PI * ((rlo + (i + 1) * dr) * (rlo + (i + 1) * dr) - (rlo + i * dr) * (rlo + i * dr));
+	}
 	return {
 		n: nmax, nmax: nmax, t: 0, caps: 0,
 		x: new Float64Array(nmax), y: new Float64Array(nmax), z: new Float64Array(nmax),
 		vx: new Float64Array(nmax), vy: new Float64Array(nmax), vz: new Float64Array(nmax),
 		ax: new Float64Array(nmax), ay: new Float64Array(nmax), az: new Float64Array(nmax),
-		cls: new Uint8Array(nmax)
+		cls: new Uint8Array(nmax),
+		live: {
+			nb: nb, rc: rc, area: area,
+			cr: new Float64Array(nb), ci: new Float64Array(nb), ms: new Float64Array(nb),
+			pr: new Float64Array(nb), pi: new Float64Array(nb),   /* pattern-frame phasor (smoothed) */
+			sr: new Float64Array(nb), si: new Float64Array(nb),   /* radial-smoothing scratch */
+			amp: new Float64Array(nb), mask: new Float64Array(nb), th: new Float64Array(nb),
+			mass: new Float64Array(6)
+		}
 	};
+}
+
+function resetLive(L) {
+	L.cr.fill(0); L.ci.fill(0); L.ms.fill(0);
+	L.pr.fill(0); L.pi.fill(0);
+	L.sr.fill(0); L.si.fill(0);
+	L.amp.fill(0); L.th.fill(0); L.mask.fill(0);
 }
 
 /* Deterministic PRNG: xorshift128 + Box-Muller with cached spare. */
@@ -141,6 +184,140 @@ function kappa(R, P) {
 	return Math.sqrt(k2);
 }
 
+/* Live-mode gain. The live wave is carried by the spiral pattern speed, so it
+ * follows the spiral gain and fades out as the bar gain comes up: a second
+ * pattern speed would beat against it (finding 11). */
+function liveGain(P, spirOn, barOn) {
+	if (!(P.live.gfb > 0) || !spirOn) return 0;
+	return P.live.gfb * P.live.g * P.spiral.g * (1 - (barOn ? P.bar.g : 0));
+}
+
+/* Fade the live mode's own gain in/out (page toggles), so enabling it never
+ * jolts the disk - same fade constant as the bar/spiral gains. */
+function updateLiveGain(P, dt, on) {
+	P.live.g = gainToward(P.live.g, on ? 1 : 0, dt / P.fade);
+}
+
+/* True when the live term must be evaluated for this configuration: enabled,
+ * spiral on, bar off, and a live profile handed in by the caller. */
+function liveOn(o, P, spirOn, barOn) {
+	if (!o || !o.live) return false;
+	return liveGain(P, spirOn !== false, barOn !== false && (o.bar === undefined || o.bar)) > 0;
+}
+
+var liveKernel = null;   /* radial smoothing of the measured phasor, in bins */
+var liveScratch = [0, 0, 0, 0];
+
+function buildLiveKernel() {
+	var r = Math.ceil(3 * LIVE_LR), w = new Float64Array(2 * r + 1), s = 0, k;
+	for (k = -r; k <= r; k++) { w[k + r] = Math.exp(-0.5 * (k / LIVE_LR) * (k / LIVE_LR)); s += w[k + r]; }
+	for (k = 0; k < w.length; k++) w[k] /= s;
+	liveKernel = w;
+}
+
+/* Refresh the live force tables from the m=2 moment accumulated by the previous
+ * substep (one-step lag, as in any SCF scheme).
+ *
+ * Density -> potential uses the local WKB Poisson relation Phi = 2*pi*G*Sig2/k
+ * (k = 2*p/R is the m=2 radial wavenumber of the spiral basis), so the injected
+ * wave is a local self-gravity estimate of the disk's OWN response, measured in
+ * the pattern frame. Amplitude saturates softly at cap (no kink: growth is
+ * smoothly damped), and a low-pass in the pattern frame with time constant tau
+ * keeps the field from chasing shot noise and from ringing.
+ *
+ * The phasor is kept in the pattern frame (A*e^-i*psi): there it is quasi-static
+ * wherever an arm exists, so averaging it over R and t suppresses noise without
+ * smearing the wave. |phasor| ~ 0 where the response is incoherent, so the
+ * phase can wander there without any effect on the force — the amplitude is the
+ * natural regularizer, no phase clamps needed. */
+function updateLive(st, P, t, dt, gain) {
+	var L = st.live, nb = L.nb, cr = L.cr, ci = L.ci, ms = L.ms;
+	var pr = L.pr, pi = L.pi, sr = L.sr, si = L.si, area = L.area, rc = L.rc;
+	var mask = L.mask, amp = L.amp, th = L.th;
+	var p = spiralP(P), om = P.spiral.om;
+	var beta = 1 - Math.exp(-dt / P.live.tau);
+	var cap = P.live.cap, i, k, w, j, ar, ai, mag, m0, est;
+	if (!liveKernel) buildLiveKernel();
+	var K = liveKernel, kr = (K.length - 1) / 2;
+
+	/* 1. measured phasor per bin, rotated into the pattern frame */
+	for (i = 0; i < nb; i++) {
+		spiralLD(rc[i], P, liveScratch);
+		var psi = 2 * (om * t + p * liveScratch[0]);
+		var cp = Math.cos(psi), sp = Math.sin(psi);
+		sr[i] = cr[i] * cp + ci[i] * sp;
+		si[i] = ci[i] * cp - cr[i] * sp;
+	}
+	/* 2. smooth over R (the wave is coherent across a few bins) and low-pass in
+	 *    time, both on the complex phasor; then clear the accumulators and note
+	 *    how much sampled disk mass sits in the bin (the feedback mask). */
+	for (i = 0; i < nb; i++) {
+		ar = 0; ai = 0;
+		for (k = -kr; k <= kr; k++) {
+			j = i + k;
+			if (j < 0 || j >= nb) continue;
+			w = K[k + kr];
+			ar += w * sr[j]; ai += w * si[j];
+		}
+		pr[i] += beta * (ar - pr[i]);
+		pi[i] += beta * (ai - pi[i]);
+		m0 = ms[i] / area[i];
+		mask[i] = LIVE_EDGE[i] * m0 / (m0 + LIVE_EFOLD);
+		cr[i] = 0; ci[i] = 0; ms[i] = 0;
+	}
+	/* 3. WKB Poisson: Phi = 2*pi*G*Sig2/k with k = 2p/R, saturated softly at cap
+	 *    so growth is damped smoothly instead of being clipped. */
+	for (i = 0; i < nb; i++) {
+		mag = Math.sqrt(pr[i] * pr[i] + pi[i] * pi[i]) / area[i];
+		est = gain * mask[i] * Math.PI * P.G * mag * rc[i] / p;
+		amp[i] = cap * est / (est + cap);
+		/* the force is written cos(2*(phi - Om t - p*L) - theta), but a density
+		 * enhancement must ADD a potential WELL at its own crest, so the phase
+		 * handed to the force is the measured crest phase + pi. */
+		th[i] = Math.atan2(pi[i], pr[i]) + Math.PI;
+	}
+	/* 4. the phase is used through cos/sin only, so unwrapping is free; the
+	 *    force's radial terms come from the interpolator (Catmull-Rom), which is
+	 *    why no derivative tables are kept here. */
+	for (i = 1; i < nb; i++) {
+		while (th[i] - th[i - 1] > Math.PI) th[i] -= 2 * Math.PI;
+		while (th[i] - th[i - 1] < -Math.PI) th[i] += 2 * Math.PI;
+	}
+}
+
+/* Catmull-Rom sample of a table and its derivative: value + d/dR. C1 across
+ * nodes (a linear table would give the wrong slope between nodes, and the
+ * analytic force has to be the exact gradient of the potential that is
+ * integrated - check-gradient gates the live term). */
+var crScratch = [0, 0];
+function liveCR(tb, x, out) {
+	var n = tb.length;
+	var i = Math.floor(x);
+	if (i < 0) i = 0;
+	if (i > n - 2) i = n - 2;
+	var t = x - i;
+	var i0 = i > 0 ? i - 1 : i, i3 = i + 2 < n ? i + 2 : i + 1;
+	var p0 = tb[i0], p1 = tb[i], p2 = tb[i + 1], p3 = tb[i3];
+	var c1 = 0.5 * (p2 - p0), c2 = p0 - 2.5 * p1 + 2 * p2 - 0.5 * p3;
+	var c3 = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+	out[0] = ((c3 * t + c2) * t + c1) * t + p1;
+	out[1] = ((3 * c3 * t + 2 * c2) * t + c1) * LIVE_INVDR;
+	return out;
+}
+
+/* Live force term at radius R: amplitude, d(amplitude)/dR, theta, dtheta/dR. */
+var liveScratch = [0, 0];
+var liveOut = [0, 0, 0, 0];
+function liveSample(L, R, out) {
+	var x = (R - LIVE_RLO) * LIVE_INVDR;
+	liveCR(L.amp, x, liveScratch);
+	out[0] = liveScratch[0]; out[1] = liveScratch[1];
+	liveCR(L.th, x, liveScratch);
+	out[2] = liveScratch[0]; out[3] = liveScratch[1];
+	if (x < 0) { out[0] = 0; out[1] = 0; }
+	return out;
+}
+
 var spiralScratch = [0, 0];
 
 /* Full potential (diagnostics/energy). Not the hot path. */
@@ -148,7 +325,7 @@ function potential(x, y, z, t, P, o) {
 	var barOn = !o || o.bar !== false, spirOn = !o || o.spiral !== false;
 	var ramp = (o && o.ramp !== undefined) ? o.ramp : rampFactor(t, P);
 	var R2 = x * x + y * y, R = Math.sqrt(R2), r2 = R2 + z * z;
-	var G = P.G, ph = 0, S, D, q, phi, u, u2, fb, Zb, L, lr, fs, Zs, p;
+	var G = P.G, ph = 0, S, D, q, phi, u, u2, fb, Zb, L, lr, fs, Zs, p, Zl;
 	S = Math.sqrt(P.thin.b * P.thin.b + z * z);
 	D = Math.sqrt(R2 + (P.thin.a + S) * (P.thin.a + S));
 	ph += -G * P.thin.md / D;
@@ -172,6 +349,14 @@ function potential(x, y, z, t, P, o) {
 		fs = Math.exp(-0.5 * lr * lr);
 		Zs = Math.exp(-z * z / (P.spiral.zs * P.spiral.zs));
 		ph += ramp * P.spiral.g * P.spiral.as * fs * Zs * Math.cos(2 * (phi - P.spiral.om * t - p * L));
+	}
+	if (liveOn(o, P, spirOn, barOn) && ramp > 0 && R < LIVE_RHI) {
+		p = spiralP(P);
+		L = spiralLD(R, P, spiralScratch)[0];
+		liveSample(o.live, R, liveOut);
+		Zl = Math.exp(-z * z / (P.live.zs * P.live.zs));
+		ph += ramp * liveOut[0] * Zl *
+			Math.cos(2 * (phi - P.spiral.om * t - p * L) - liveOut[2]);
 	}
 	return ph;
 }
@@ -235,13 +420,32 @@ function accelSingle(x, y, z, t, P, o, out) {
 			ay += fR * (y / Rc) + fp * (x / Rc);
 			az += fz;
 		}
+		if (liveOn(o, P, spirOn, barOn) && ramp > 0 && R < LIVE_RHI) {
+			var p2 = spiralP(P);
+			spiralLD(R, P, spiralScratch);
+			var L2 = spiralScratch[0], dL2 = spiralScratch[1];
+			liveSample(o.live, R, liveOut);
+			var bsL = 2 * (P.spiral.om * t + p2 * L2) + liveOut[2];
+			var csL = Math.cos(bsL), ssL = Math.sin(bsL);
+			C = c2 * csL + s2 * ssL; S2 = s2 * csL - c2 * ssL;
+			Z = Math.exp(-z * z / (P.live.zs * P.live.zs));
+			dZ = Z * (-2 * z / (P.live.zs * P.live.zs));
+			var W = 2 * p2 * dL2 + liveOut[3];
+			fR = -Z * (liveOut[1] * C + liveOut[0] * S2 * W);
+			fp = Z * liveOut[0] * 2 * S2 / Rc;
+			fz = -liveOut[0] * C * dZ;
+			ax += ramp * (fR * (x / Rc) - fp * (y / Rc));
+			ay += ramp * (fR * (y / Rc) + fp * (x / Rc));
+			az += ramp * fz;
+		}
 	}
 	out[0] = ax; out[1] = ay; out[2] = az;
 	return out;
 }
 
-/* Fill ax/ay/az for all active stars at time t. Internal workhorse. */
-function computeAccel(st, P, t, barOn, spirOn) {
+/* Fill ax/ay/az for all active stars at time t. Internal workhorse.
+ * dt is the substep used for the live-mode low-pass (and nothing else). */
+function computeAccel(st, P, t, barOn, spirOn, dt) {
 	var x = st.x, y = st.y, z = st.z, ax = st.ax, ay = st.ay, az = st.az;
 	var n = st.n, G = P.G, rmin = P.rmin;
 	var ramp = rampFactor(t, P);
@@ -256,7 +460,14 @@ function computeAccel(st, P, t, barOn, spirOn) {
 	var i, R2, R, r2, S, D2, D, com, q, c, Rc, R2c, c2, s2;
 	var u, u2, den, fb, dfb, Zb, dZb, C, S2, fR, fp, fz;
 	var L, dL, pdL, lx, llr, lg, lrp, lraw, fs, dfs, Zs, dZs, bs, cs, ss;
+	var liveG = liveGain(P, spirOn, barOn), liveOn = liveG > 0 && ramp > 0;
+	var lv = st.live;
+	var lcr = lv.cr, lci = lv.ci, lms = lv.ms, lmass = lv.mass, lcls = st.cls, lnb = lv.nb;
+	var zl2 = P.live.zs * P.live.zs;
+	var lb, lphi, ldp, lthv, ldth, bsL, csL, ssL, Zl, dZl, W;
 	var doModes = ramp > 0 && (Ab !== 0 || As !== 0);
+	var doSpiral = As !== 0 || liveOn;
+	if (liveOn && !P.live.freeze) updateLive(st, P, t, dt, liveG);
 	for (i = 0; i < n; i++) {
 		var xi = x[i], yi = y[i], zi = z[i];
 		R2 = xi * xi + yi * yi; R = Math.sqrt(R2); r2 = R2 + zi * zi;
@@ -274,9 +485,27 @@ function computeAccel(st, P, t, barOn, spirOn) {
 		axi += c * xi; ayi += c * yi; azi += c * zi;
 		c = -P.halo.vh2 / (r2 + P.halo.rc * P.halo.rc);
 		axi += c * xi; ayi += c * yi; azi += c * zi;
-		if (doModes && R >= rmin) {
+		if ((doModes || liveOn) && R >= rmin) {
 			Rc = R; R2c = Rc * Rc;
 			c2 = (xi * xi - yi * yi) / R2c; s2 = 2 * xi * yi / R2c;
+			if (liveOn && R < LIVE_RHI && R >= LIVE_RLO) {
+				/* this substep's m=2 moment, consumed by the next substep's profile */
+				lb = ((R - LIVE_RLO) * LIVE_INVDR) | 0;
+				if (lb > lnb - 1) lb = lnb - 1;
+				var lm = lmass[lcls[i]];
+				lcr[lb] += lm * c2; lci[lb] += lm * s2; lms[lb] += lm;
+			}
+			if (doSpiral) {
+				lraw = Math.log(R / rp);
+				if (R <= r1lo) { L = 0; dL = 0; }
+				else if (R >= r1hi) { L = lraw + lrp1c; dL = 1 / R; }
+				else {
+					lx = (R - r1lo) / (r1hi - r1lo); llr = lraw + lrp1c;
+					lg = lx * lx * (3 - 2 * lx);
+					L = lg * llr;
+					dL = 6 * lx * (1 - lx) / (r1hi - r1lo) * llr + lg / R;
+				}
+			}
 			if (Ab !== 0) {
 				u = R / rb; u2 = u * u; den = 1 + u2 * u2;
 				fb = u2 / den;
@@ -292,20 +521,12 @@ function computeAccel(st, P, t, barOn, spirOn) {
 				azi += fz;
 			}
 			if (As !== 0) {
-				lraw = Math.log(R / rp);
 				lrp = lraw / sig;
 				fs = Math.exp(-0.5 * lrp * lrp);
 				dfs = fs * (-lraw / (sig2 * R));
 				Zs = Math.exp(-zi * zi / zs2);
 				if (R <= r1lo) { cs = cs0; ss = ss0; pdL = 0; }
 				else {
-					if (R >= r1hi) { L = lraw + lrp1c; dL = 1 / R; }
-					else {
-						lx = (R - r1lo) / (r1hi - r1lo); llr = lraw + lrp1c;
-						lg = lx * lx * (3 - 2 * lx);
-						L = lg * llr;
-						dL = 6 * lx * (1 - lx) / (r1hi - r1lo) * llr + lg / R;
-					}
 					bs = bs0 + 2 * p * L;
 					cs = Math.cos(bs); ss = Math.sin(bs);
 					pdL = p * dL;
@@ -318,6 +539,24 @@ function computeAccel(st, P, t, barOn, spirOn) {
 				axi += fR * (xi / Rc) - fp * (yi / Rc);
 				ayi += fR * (yi / Rc) + fp * (xi / Rc);
 				azi += fz;
+			}
+			if (liveOn && R < LIVE_RHI) {
+				/* same algebra as the spiral term, with a measured amplitude and a
+				 * measured phase offset theta(R): local wavenumber 2*p*dL + dtheta */
+				liveSample(lv, R, liveOut);
+				lphi = liveOut[0]; ldp = liveOut[1]; lthv = liveOut[2]; ldth = liveOut[3];
+				bsL = bs0 + 2 * p * L + lthv;
+				csL = Math.cos(bsL); ssL = Math.sin(bsL);
+				C = c2 * csL + s2 * ssL; S2 = s2 * csL - c2 * ssL;
+				Zl = Math.exp(-zi * zi / zl2);
+				dZl = Zl * (-2 * zi / zl2);
+				W = 2 * p * dL + ldth;
+				fR = -Zl * (ldp * C + lphi * S2 * W);
+				fp = Zl * lphi * 2 * S2 / Rc;
+				fz = -lphi * C * dZl;
+				axi += ramp * (fR * (xi / Rc) - fp * (yi / Rc));
+				ayi += ramp * (fR * (yi / Rc) + fp * (xi / Rc));
+				azi += ramp * fz;
 			}
 		}
 		ax[i] = axi; ay[i] = ayi; az[i] = azi;
@@ -336,7 +575,7 @@ function step(st, P, dt, barOn, spirOn) {
 		x[i] += vx[i] * dt; y[i] += vy[i] * dt; z[i] += vz[i] * dt;
 	}
 	st.t += dt;
-	computeAccel(st, P, st.t, barOn, spirOn);
+	computeAccel(st, P, st.t, barOn, spirOn, dt);
 	for (i = 0; i < n; i++) {
 		var nvx = vx[i] + ax[i] * h, nvy = vy[i] + ay[i] * h, nvz = vz[i] + az[i] * h;
 		var v2 = nvx * nvx + nvy * nvy + nvz * nvz;
@@ -498,6 +737,20 @@ function alignEpicycles(st, P) {
 	}
 }
 
+/* Per-star mass by class, so the sampled m=2 column density is in the same
+ * units as the potential's component masses: thin-table stars (thin + young)
+ * share thin.md between them, thick stars share thick.md. Bulge/halo/stream
+ * carry no live mass — the live mode estimates the disk's own response. */
+function liveMassTable(st, P) {
+	var n = st.n, cls = st.cls, mass = st.live.mass, i, c;
+	var cnt = [0, 0, 0, 0, 0, 0];
+	for (i = 0; i < n; i++) cnt[cls[i]]++;
+	mass[0] = mass[5] = (cnt[0] + cnt[5]) > 0 ? P.thin.md / (cnt[0] + cnt[5]) : 0;
+	mass[1] = cnt[1] > 0 ? P.thick.md / cnt[1] : 0;
+	mass[2] = mass[3] = mass[4] = 0;
+	return mass;
+}
+
 function initStars(st, P, seed) {
 	var rng = RNG(seed === undefined ? P.seed : seed);
 	var tabThin = buildDiskTable(1.0, 0.05, 6, 1024);
@@ -556,7 +809,9 @@ function initStars(st, P, seed) {
 	/* S2: seed aligned epicycles BEFORE initial accel computation. */
 	alignEpicycles(st, P);
 	st.n = nmax; st.t = 0; st.caps = 0;
-	computeAccel(st, P, 0, true, true);
+	resetLive(st.live);
+	liveMassTable(st, P);
+	computeAccel(st, P, 0, true, true, P.dtSettle);
 	return rng;
 }
 
@@ -619,8 +874,10 @@ return {
 	vc: vc, omega: omega, kappa: kappa,
 	resonances: resonances,
 	energy1: energy1, jacobi1: jacobi1,
-	rampFactor: rampFactor, updateModeGains: updateModeGains, spiralP: spiralP,
+	rampFactor: rampFactor, updateModeGains: updateModeGains, updateLiveGain: updateLiveGain, spiralP: spiralP,
 	alignEcc: alignEcc, alignEpicycles: alignEpicycles,
+	liveSample: liveSample, updateLive: updateLive, liveGain: liveGain, liveMassTable: liveMassTable,
+	LIVE_RLO: LIVE_RLO, LIVE_RHI: LIVE_RHI, LIVE_NB: LIVE_NB,
 	buildDiskTable: buildDiskTable, sampleDisk: sampleDisk,
 	classFor: classFor,
 	RNG: RNG

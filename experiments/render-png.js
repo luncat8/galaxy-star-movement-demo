@@ -4,6 +4,8 @@
  *   calm    shipping default preset (spiral-only, P.align as committed)
  *   align   S2 kinematic-aligned ICs experiment (P.align=1)
  *   noalign calm with alignment off (P.align=0) - S2 A/B baseline
+ *   live    calm + S5 live m=2 feedback (P.live.gfb, env LIVE, default 50)
+ *   live-noalign  live with S2 alignment off (does the seeded field feed it?)
  */
 'use strict';
 var zlib = require('zlib'), fs = require('fs'), path = require('path');
@@ -22,8 +24,10 @@ var P = Galaxy.defaultParams();
 P.spiral.om = 0.30; P.spiral.as = 0.06; P.bar.ab = 0;
 if (name === 'align') P.align = 1;
 else if (name === 'noalign') P.align = 0;
+else if (name === 'live') P.live.gfb = parseFloat(process.env.LIVE || '50');
+else if (name === 'live-noalign') { P.live.gfb = parseFloat(process.env.LIVE || '50'); P.align = 0; }
 else if (name !== 'calm') {
-	console.error('variant must be calm, align or noalign');
+	console.error('variant must be calm, align, noalign, live or live-noalign');
 	process.exit(1);
 }
 P.bar.g = 0; P.spiral.g = 1;
