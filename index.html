@@ -805,7 +805,8 @@ function init() {
 	bindSlider('s-gfb', function(v) {
 		P.live.gfb = v;                       /* 0..10, the amplitude lever */
 		if (v > 0 && !ui.live) setCheck('c-live', 'live');   /* dragging it arms the mode */
-		if (v === 0 && P.live.g > 0) P.live.g = 0;
+		/* gfb=0 alone disables the force (liveGain), and the gain keeps fading
+		 * rather than cutting the field in one substep (finding 1) */
 		snapEJ();
 		return v.toFixed(1);
 	});
