@@ -4,6 +4,7 @@
  * Not a physics gate: asserts only "runs N frames without exceptions". */
 var fs = require('fs'), L = require('./lib.js');
 global.Galaxy = L.Galaxy;
+global.SelfGrav = require('../selfgrav.js');
 
 function stubCtx() {
 	var grad = { addColorStop: function() {} };
@@ -44,6 +45,7 @@ var SLIDER_VALUES = {
 	's-speed': '0.03', 's-ab': '0.06', 's-as': '0.06', 's-ob': '0.36',
 	's-os': '0.30', 's-eta': '0.05', 's-sig': '0.1', 's-tilt': '20', 's-gfb': '0'
 };
+/* sel-sg default '0' (off) comes from stubEl */
 global.document = {
 	getElementById: function(id) {
 		if (!els[id]) {
@@ -92,29 +94,46 @@ var settled = frames;
 console.log('ran ' + settled + ' headless frames incl. full settle, hut="' +
 	(String(els.hud ? els.hud.textContent : '')).slice(0, 60) + '"');
 
-/* S5 live mode through the real UI path: toggle on (must arm a default
- * strength), drag the slider, and check the feedback actually reaches the
- * physics (non-zero live amplitude table) without exceptions. */
+/* Solver select through the real UI path: WKB must arm a default strength
+ * and hand the refresh to galaxy.js (freeze off); global must set freeze,
+ * arm the table through SelfGrav ticks, and show up in the HUD; off must
+ * leave the page running. Also the gfb slider. */
 try {
-	els['c-live'].checked = true;
-	els['c-live'].fire('change');
-	if (__hooks.P.live.gfb <= 0) L.fail('live toggle on left gfb at 0');
+	if (__hooks.P.live.freeze) L.fail('page booted with P.live.freeze set at solver off');
+	els['sel-sg'].value = '1';
+	els['sel-sg'].fire('change');
+	if (__hooks.P.live.gfb <= 0) L.fail('solver WKB left gfb at 0');
+	if (__hooks.P.live.freeze) L.fail('WKB solver must not set freeze');
 	els['s-gfb'].value = '9';
 	els['s-gfb'].fire('input');
-	if (__hooks.P.live.gfb !== 9) L.fail('live slider did not set gfb (' + __hooks.P.live.gfb + ')');
-	for (frames = 0; frames < 80; frames++) {
+	if (__hooks.P.live.gfb !== 9) L.fail('gfb slider did not set gfb (' + __hooks.P.live.gfb + ')');
+	els['sel-sg'].value = '2';
+	els['sel-sg'].fire('change');
+	if (!__hooks.P.live.freeze) L.fail('global solver did not set P.live.freeze');
+	if (__hooks.P.live.cap !== 0.10) L.fail('global solver cap is ' + P.live.cap + ', want 0.10');
+	if (__hooks.ui.sg !== 2) L.fail('ui.sg not 2 after select');
+	for (frames = 0; frames < 120; frames++) {
 		simNow += 16.7;
 		var cb2 = rafCb; rafCb = null;
 		cb2(simNow);
 	}
 	var lv = __hooks.st.live, nz = 0;
 	for (var bi = 0; bi < lv.nb; bi++) if (lv.amp[bi] > 0) nz++;
-	if (!nz) L.fail('live mode armed but the feedback table stayed zero');
-	if (!/live m=2/.test(String(els.hud.textContent)))
-		L.fail('HUD does not report the live mode: "' + els.hud.textContent + '"');
-	console.log('live mode: gfb=' + __hooks.P.live.gfb + ' gain=' + __hooks.P.live.g.toFixed(2) +
-		' bins with amplitude=' + nz + '/32, hud="' + els.hud.textContent.slice(0, 80) + '"');
+	if (!nz) L.fail('global solver armed but the feedback table stayed zero');
+	if (!/sg:global/.test(String(els.hud.textContent)))
+		L.fail('HUD does not report the solver: "' + els.hud.textContent + '"');
+	console.log('global sg: gfb=' + __hooks.P.live.gfb + ' gain=' + __hooks.P.live.g.toFixed(2) +
+		' freeze=' + __hooks.P.live.freeze + ' bins with amplitude=' + nz + '/32, hud="' +
+		els.hud.textContent.slice(0, 90) + '"');
+	els['sel-sg'].value = '0';
+	els['sel-sg'].fire('change');
+	if (__hooks.ui.sg !== 0) L.fail('select off did not clear ui.sg');
+	for (frames = 0; frames < 40; frames++) {
+		simNow += 16.7;
+		var cb3 = rafCb; rafCb = null;
+		cb3(simNow);
+	}
 } catch (e) {
-	L.fail('live-mode UI path threw: ' + (e && e.stack || e));
+	L.fail('solver-select UI path threw: ' + (e && e.stack || e));
 }
-L.pass('smoke-page index.html runs headless, incl. live-mode toggle');
+L.pass('smoke-page index.html runs headless, incl. solver select (off/WKB/global)');

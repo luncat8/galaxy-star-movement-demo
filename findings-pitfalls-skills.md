@@ -320,3 +320,38 @@ flagged stars on the bar's depleted minor axis (374 vs 570 on the well axis).
 `alignEpicycles` also carried two dead "crest-pointing unit vector" locals.
 Rule: when a phase looks like "pi off", check the sign convention of the
 forcing term against the measured phasor BEFORE reasoning about dynamics.
+
+## 30. A hard clamp in the consumer is a boundary condition the producer must satisfy (LIVE_RLO value+slope)
+
+`liveSample` zeroes the force-table amplitude for `R < LIVE_RLO` with the
+derivative zeroed (it is a hard cut, not a taper). The WKB tables arrived with
+a small inner amplitude and squeaked by (frozen-table Jacobi p99 1.5e-3); the
+global-solve tables arrived ~5x stronger, so the Catmull-Rom slope at the
+boundary (~0.5*amp[1]/dr, a ~1.4e-2 force kink) fired at every star crossing:
+p99 6.5e-3, dt-INDEPENDENT (crossing error accumulates the same at smaller
+dt), linear in table amplitude, independent of theta. Fix: the producer tapers
+so value AND slope reach the clamp as 0 - which pins the first TWO bins
+(boundary slope is set by amp[1]) to exact zero. Signature to recognize:
+episodic one-time dEJ jumps (~1e-3) in inner/plunging stars, plateaus after;
+dt-invariance + amp-linearity distinguish it from integrator truncation.
+
+## 31. liveGain(P, spirOn, barOn): two adjacent booleans are a swap waiting to happen
+
+`Galaxy.liveGain` takes (spirOn, barOn) in that order. The page first wired it
+as `liveGain(P, ui.bar, ui.spiral)` - with the calm preset (bar off, spiral
+on) that silently returns 0: the solver select armed, `P.live.freeze` set,
+everything LOOKED live, and the feedback table stayed empty (only the
+smoke-page table-nonzero check caught it). When a gate result is "armed but
+zero", check argument order against the signature before suspecting the
+physics; `check-jacobi` had the same trap earlier as `(false, true)` passed
+for (spirOn, barOn).
+
+## 32. Closed-loop gates must normalize like the pre-flight (mass-weighted moments) and carry their own twin
+
+Q(R) from `vr2/n - (vr1/n)^2` with mass-weighted vr moments underestimates
+sigR by ~sqrt(m_avg) (~100x here): every run AND its twin read minQ 0.03 and
+the gate failed universally - a broken normalizer shows up as "the control
+fails too". Divide by SUM(m). Same class of rule: relative gates (radial
+peak/mean <= 1.25x "first run") must compare against a g=0 twin run in the
+SAME invocation (finding-5 rule, restated in 0.5.0 plan 4.3) or the baseline
+is whatever the previous script happened to leave in the machine.

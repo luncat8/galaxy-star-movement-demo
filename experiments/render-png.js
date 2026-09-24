@@ -6,6 +6,8 @@
  *   noalign calm with alignment off (P.align=0) - S2 A/B baseline
  *   live    calm + S5 live m=2 feedback (P.live.gfb, env LIVE, default 50)
  *   live-noalign  live with S2 alignment off (does the seeded field feed it?)
+ *   sg      calm + 0.5.0 global m=2 self-gravity (selfgrav.js, env G= gain
+ *           default 1, EPS= kernel softening, SOLVER=wkb|global default)
  * env: SPLIT=<R> overrides P.alignSplit (0 = legacy t=0 seeding);
  *      PHASE=<deg> overrides P.alignPhase (0 = seed at the potential hill,
  *      90 = at the well, where the forced response crests - check-arm-phase).
@@ -25,12 +27,25 @@ var CLS_S = [7, 6, 6, 5, 7, 8];
 var name = process.argv[2] || 'calm';
 var P = Galaxy.defaultParams();
 P.spiral.om = 0.30; P.spiral.as = 0.06; P.bar.ab = 0;
+var SelfGrav = null, sgGain = 0, sgOn = false;
 if (name === 'align') P.align = 1;
 else if (name === 'noalign') P.align = 0;
 else if (name === 'live') P.live.gfb = parseFloat(process.env.LIVE || '50');
 else if (name === 'live-noalign') { P.live.gfb = parseFloat(process.env.LIVE || '50'); P.align = 0; }
+else if (name === 'sg') {
+	SelfGrav = require('../selfgrav.js');
+	SelfGrav.ensure(P);
+	if (process.env.EPS) { P.sg.eps = parseFloat(process.env.EPS); SelfGrav.ensure(P); }
+	sgOn = (process.env.SOLVER || 'global') !== 'wkb';
+	sgGain = parseFloat(process.env.G || '1');
+	P.live.gfb = sgOn ? sgGain : 0;
+	P.live.freeze = sgOn;
+	P.live.cap = sgOn ? P.sg.cap : 0.02;
+	P.sg.solver = sgOn ? 1 : 0;
+	if (sgOn) P.live.g = 1;
+}
 else if (name !== 'calm') {
-	console.error('variant must be calm, align, noalign, live or live-noalign');
+	console.error('variant must be calm, align, noalign, live, live-noalign or sg');
 	process.exit(1);
 }
 if (process.env.SPLIT !== undefined) P.alignSplit = parseFloat(process.env.SPLIT);
@@ -269,26 +284,38 @@ function snapshot(st, om, tag) {
 	writePng(path.join(__dirname, 'logs', 'render-' + label + '-' + tag + '.png'), W, H, null);
 }
 
-var label = name + (process.env.SPLIT !== undefined ? '-s' + process.env.SPLIT : '') +
+var label = name + (name === 'sg' ? '-g' + sgGain + '-e' + P.sg.eps + (sgOn ? '' : '-wkb') : '') +
+	(process.env.SPLIT !== undefined ? '-s' + process.env.SPLIT : '') +
 	(process.env.PHASE !== undefined ? '-p' + process.env.PHASE : '');
 
 var omGlow = P.spiral.om;
 var st = Galaxy.createState(N);
 st.n = N;
 Galaxy.initStars(st, P, P.seed);
-Galaxy.settle(st, P, Math.round(P.tsettle / P.dtSettle), P.dtSettle, false, true);
+
+/* settle in refresh-sized chunks so the variant table builds while the disk
+ * settles, exactly like the page (otherwise the first 30 tu run at g=0) */
+function settleChunked() {
+	var total = Math.round(P.tsettle / P.dtSettle), c = 0, m;
+	while (c < total) {
+		m = Math.min(sgOn ? P.sg.refresh : total, total - c);
+		Galaxy.settle(st, P, m, P.dtSettle, false, true);
+		if (sgOn) SelfGrav.step(st, P, st.t, P.dtSettle, m, Galaxy.liveGain(P, true, false));
+		c += m;
+	}
+}
+function stepGlow(DT2) {
+	Galaxy.step(st, P, DT2, false, true);
+	if (sgOn) SelfGrav.step(st, P, st.t, DT2, 1, Galaxy.liveGain(P, true, false));
+	accumulateGlow(st, omGlow, DT2);
+}
+settleChunked();
 var k;
 for (k = 0; k < Math.round(P.tsettle / DT); k++) accumulateGlow(st, omGlow, DT);
 snapshot(st, omGlow, 'settle');
 var mid = Math.round(75 / DT), end = Math.round(150 / DT);
-for (k = 0; k < mid; k++) {
-	Galaxy.step(st, P, DT, false, true);
-	accumulateGlow(st, omGlow, DT);
-}
+for (k = 0; k < mid; k++) stepGlow(DT);
 snapshot(st, omGlow, '75tu');
-for (k = mid; k < end; k++) {
-	Galaxy.step(st, P, DT, false, true);
-	accumulateGlow(st, omGlow, DT);
-}
+for (k = mid; k < end; k++) stepGlow(DT);
 snapshot(st, omGlow, '150tu');
-L.pass('render-png ' + name + ' done');
+L.pass('render-png ' + label + ' done');

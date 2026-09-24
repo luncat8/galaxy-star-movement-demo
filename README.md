@@ -17,7 +17,14 @@ over tens of time units. The bar
 is a toggle experiment, and so is the live m=2 mode (S5): the disk's measured
 m=2 response is optionally fed back as a small WKB self-gravity term, which
 measurably strengthens the steady arms inside corotation but cannot hold the
-outer disk - see archive/0.4.0-worklog.md. Rendering adds
+outer disk - see archive/0.4.0-worklog.md. The self-gravity select adds a
+third solver, `global` (0.5.0, selfgrav.js): a real m=2 Green's-function
+solve of the same measured response instead of the local WKB estimate. It
+puts ~12% of the imposed field at R=4.5 (112x the WKB term) and safely
+enhances the inner arms (~+12% coherent amplitude at gain 1), but open- and
+closed-loop studies both confirm the outer disk stays unresponsive at
+Q=8-36 - it ships as an experiment, default off; see
+archive/0.5.0-worklog.md. Rendering adds
 interpolated sub-pixel motion and a glow underlay (pattern-frame accumulated,
 edge-filtered disk light) - the surface-brightness layer that makes density-wave
 renders like https://en.wikipedia.org/wiki/File:Galaxy_rotation_wave.ogv look
@@ -28,5 +35,11 @@ Run: open index.html in a browser (file:// friendly, no build, no modules).
     node experiments/check-response.js          # structure persistence gates
     node experiments/check-arm-phase.js         # crest phase vs potential hill/well
     node experiments/check-live-mode.js 0 50    # S5 self-gravity study
+    node experiments/check-poisson.js           # 0.5.0 kernel vs dense quadrature
+    node experiments/check-selfgrav-phase.js    # 0.5.0 sign/wiring, A/B1/B2
+    node experiments/check-selfgrav-open.js     # 0.5.0 frozen-table open loop
+    node experiments/check-selfgrav-loop.js     # 0.5.0 gain ladder + g=0 twin
+    node experiments/check-legacy.js            # galaxy.js vs 0.4.2 build hash
     node experiments/render-png.js calm         # headless preview renders
+    node experiments/render-png.js sg           # ... also: align, noalign, live, live-noalign, sg
     (see experiments/ for the full validation suite)

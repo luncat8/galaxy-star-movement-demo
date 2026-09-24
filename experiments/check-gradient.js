@@ -73,3 +73,45 @@ L.pass('check-gradient static modes analytic vs numeric within 1e-4');
 	console.log('live mode  : maxRel=' + maxRel2.toExponential(2) + ' maxAbs=' + maxAbs2.toExponential(2) + ' worst: ' + worst2);
 	L.pass('check-gradient live m=2 term analytic vs numeric within 1e-4');
 })();
+
+/* 0.5.0: the variant table (SelfGrav.solve from a synthetic measurement) must
+ * pass the same gradient gate — exercises the kernel write path, the edge
+ * taper and the re-unwrap, then the identical force algebra. */
+(function selfGravGradient() {
+	var SelfGrav = require('../selfgrav.js');
+	var Pg = Galaxy.defaultParams();
+	Pg.align = 0;
+	Pg.bar.g = 0; Pg.spiral.g = 1; Pg.live.gfb = 1;
+	Pg.live.freeze = true; Pg.live.cap = 0.10;
+	SelfGrav.ensure(Pg);
+	var stg = Galaxy.createState(1), Lg = stg.live, i, R;
+	for (i = 0; i < Lg.nb; i++) {
+		R = Lg.rc[i];
+		var w = Math.exp(-(R - 2.6) * (R - 2.6) / 5);
+		/* crest phase varying with R so dtheta/dR is exercised */
+		Lg.pr[i] = 0.03 * w * Math.cos(-2.2 * R + 0.4 * Math.sin(R));
+		Lg.pi[i] = 0.03 * w * Math.sin(-2.2 * R + 0.4 * Math.sin(R));
+		Lg.mask[i] = 1;
+	}
+	SelfGrav.solve(stg, Pg, 1);
+	var o3 = { bar: false, spiral: true, ramp: 1, live: Lg };
+	var t3 = 1.9, h3 = 1e-5, maxRel3 = 0, maxAbs3 = 0, worst3 = '', out3 = [0, 0, 0];
+	var Rs3 = [0.6, 1.4, 2.6, 3.8, 5.0, 6.2], phis3 = [0.4, 2.6, 5.0], zs3 = [0, 0.6];
+	Rs3.forEach(function(RR) { phis3.forEach(function(pp) { zs3.forEach(function(zz) {
+		var X = RR * Math.cos(pp), Y = RR * Math.sin(pp);
+		Galaxy.accelSingle(X, Y, zz, t3, Pg, o3, out3);
+		[
+			[Galaxy.potential(X + h3, Y, zz, t3, Pg, o3), Galaxy.potential(X - h3, Y, zz, t3, Pg, o3), out3[0]],
+			[Galaxy.potential(X, Y + h3, zz, t3, Pg, o3), Galaxy.potential(X, Y - h3, zz, t3, Pg, o3), out3[1]],
+			[Galaxy.potential(X, Y, zz + h3, t3, Pg, o3), Galaxy.potential(X, Y, zz - h3, t3, Pg, o3), out3[2]]
+		].forEach(function(d, dim) {
+			var num = -(d[0] - d[1]) / (2 * h3);
+			var abs = Math.abs(d[2] - num), rel = abs / Math.max(Math.abs(d[2]), 1e-3);
+			if (abs > maxAbs3) maxAbs3 = abs;
+			if (rel > maxRel3) { maxRel3 = rel; worst3 = 'R=' + RR + ' dim=' + dim + ' ana=' + d[2] + ' num=' + num; }
+			if (rel > 1e-4 && abs > 1e-7) L.fail('selfgrav grad mismatch ' + worst3 + ' rel=' + rel + ' abs=' + abs);
+		});
+	}); }); });
+	console.log('selfgrav   : maxRel=' + maxRel3.toExponential(2) + ' maxAbs=' + maxAbs3.toExponential(2) + ' worst: ' + worst3);
+	L.pass('check-gradient variant (selfgrav) table analytic vs numeric within 1e-4');
+})();

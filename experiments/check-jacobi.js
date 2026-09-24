@@ -113,4 +113,46 @@ runSingle('bar-only', true, false, P0.bar.om);
 runSingle('spiral-only', false, true, P0.spiral.om);
 runCombined();
 runLiveFrozen();
-L.pass('check-jacobi single-pattern conserved, live-frozen conserved, combined shadow-converged');
+
+/* 0.5.0: frozen VARIANT table (SelfGrav, populated through the real refresh)
+ * is a static single-pattern field — same invariants as runLiveFrozen.
+ * The table is built by ticking the variant during settle, then frozen (no
+ * more ticks) for the whole 60-tu run: while it updates no invariant exists. */
+function runSelfGravFrozen() {
+	var SelfGrav = require('../selfgrav.js');
+	var P = Galaxy.defaultParams();
+	P.spiral.om = 0.30; P.spiral.as = 0.06; P.bar.ab = 0; P.bar.g = 0; P.spiral.g = 1;
+	P.live.gfb = 1; P.live.freeze = true; P.live.cap = 0.10;
+	SelfGrav.ensure(P);
+	P.sg.solver = 1;
+	var N = 1000, dt = 0.01, T = 60;
+	var st = Galaxy.createState(N);
+	st.n = N;
+	Galaxy.initStars(st, P, P.seed);
+	var c, m;
+	for (c = 0; c < Math.round(P.tsettle / P.dtSettle); ) {
+		m = Math.min(P.sg.refresh, Math.round(P.tsettle / P.dtSettle) - c);
+		Galaxy.settle(st, P, m, P.dtSettle, false, true);
+		SelfGrav.step(st, P, st.t, P.dtSettle, m, Galaxy.liveGain(P, true, false));
+		c += m;
+	}
+	/* freeze: no further SelfGrav.step calls — amp/th stay static */
+	var o = { bar: false, spiral: true, ramp: 1, live: st.live };
+	var e0 = new Float64Array(N), i, k, dd = [], nz = 0;
+	for (i = 0; i < st.live.nb; i++) if (st.live.amp[i] > 0) nz++;
+	if (!nz) L.fail('selfgrav-frozen: table empty after settle ticks');
+	for (i = 0; i < N; i++)
+		e0[i] = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, P.spiral.om, o);
+	for (k = 0; k < Math.round(T / dt); k++) Galaxy.step(st, P, dt, false, true);
+	for (i = 0; i < N; i++) {
+		var e1 = Galaxy.jacobi1(st.x[i], st.y[i], st.z[i], st.vx[i], st.vy[i], st.vz[i], st.t, P, P.spiral.om, o);
+		dd.push(Math.abs(e1 - e0[i]) / Math.max(Math.abs(e0[i]), 0.3));
+	}
+	dd.sort(function(a, b) { return a - b; });
+	console.log('selfgrav-frozen: p99|dEJ|/|EJ|=' + dd[990].toExponential(2) +
+		' max=' + dd[N - 1].toExponential(2) + ' caps=' + st.caps + ' nonzero bins=' + nz + '/32');
+	if (dd[990] > 2e-3) L.fail('selfgrav-frozen Jacobi p99 ' + dd[990].toExponential(2) + ' > 2e-3');
+	if (dd[N - 1] > 1e-2) L.fail('selfgrav-frozen Jacobi max ' + dd[N - 1].toExponential(2) + ' > 1e-2');
+}
+runSelfGravFrozen();
+L.pass('check-jacobi single-pattern conserved, live-frozen conserved, selfgrav-frozen conserved, combined shadow-converged');
