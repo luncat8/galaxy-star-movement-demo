@@ -2,6 +2,12 @@
 
 fast math demo stars movement in galaxy, without calculate N body gravity.
 
+index.html - attempt to make prover math to recreate galaxy shapes. currently partially working, shapes are noisy and not stable, need to improve.
+
+simple/simple-friction-field-webGPU.html - WebGPU HDR implementation with 16-bit float extended dynamic range presentation, chromaticity-preserving tonemapping preventing stars from turning white above 255 of brightness, and exposure/saturation controls.
+
+simple/simple-friction-field-webGL.html - WebGL2 toy approach using friction field that emulate all forces and ensure stars grouped in arms and bar; this produce visually good galaxy, stable, fast, good for simple games.
+
 Every star is a persistent test particle in a fixed multi-component potential
 (thin/thick disk, bulge, halo) with rigidly rotating m=2 wave modes, integrated
 with a symplectic leapfrog. Spiral arms are density-wave crests: stars stream

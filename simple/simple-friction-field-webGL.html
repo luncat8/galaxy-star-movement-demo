@@ -4,9 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Density Waves — Spiral Arms Without Gravity</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #050208;
@@ -25,7 +22,7 @@
     overflow: hidden;
     background: #000;
     color: var(--fg);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
     cursor: grab;
     user-select: none;
     -webkit-user-select: none;
@@ -244,12 +241,34 @@
         </div>
 
         <div class="control-row">
+          <div class="control-label">
+            <span>Exposure</span>
+            <span class="control-value" id="exposure-val">0.0</span>
+          </div>
+          <input type=range id="exposure" min="-3" max="3" step="0.1" value="0">
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Saturation</span>
+            <span class="control-value" id="sat-val">1.00</span>
+          </div>
+          <input type=range id="sat" min="0" max="2" step="0.05" value="1">
+        </div>
+
+        <div class="control-row">
           <div class="control-label"><span>Visualize</span></div>
           <div class="btn-row">
             <button class="btn" id="btn-field">Slow Field</button>
             <button class="btn active" id="btn-tint" title="Tint the stars inside the slow field pink. Off: every disk star keeps the plain disk colour, so only the density jam itself shows the arms">Arm Tint</button>
             <button class="btn" id="btn-trails">Trails</button>
             <button class="btn" id="btn-reset">Reset View</button>
+          </div>
+        </div>
+
+        <div class="control-row" style="margin-top: 4px;">
+          <div class="btn-row">
+            <a class="btn" href="simple-friction-field-webGPU.html" style="font-size:8px; text-decoration:none;">Switch to WebGPU HDR</a>
           </div>
         </div>
       </div>
@@ -270,9 +289,11 @@
 
   <div id="glfail">
     <div class="panel">
-      <b>WEBGL 2 UNAVAILABLE</b><br>
-      This simulation renders through WebGL 2. Your browser or device
-      blocked context creation. Enable hardware acceleration and reload.
+      <b>HDR RENDERING UNAVAILABLE</b><br>
+      This simulation accumulates starlight in a 16-bit float
+      framebuffer and tone-maps it (WebGL 2 + a float color buffer).
+      Your browser or device blocked WebGL 2 or float rendering.
+      Enable hardware acceleration and reload.
     </div>
   </div>
 
@@ -291,6 +312,11 @@
        and fan offset/colour/alpha/size are per-instance attributes).
      - Trails use a ping-pong framebuffer pair (WebGL cannot fade
        the default framebuffer like Canvas2D's source-over fill).
+     - Real HDR: the scene accumulates radiance in an RGBA16F float
+       framebuffer (headroom far past 1.0, no 8-bit clip) and the
+       present pass grades it: exposure (EV) -> luma-preserving
+       saturation -> Narkowicz ACES roll-off -> sRGB encode. Bright
+       star cores roll off filmically instead of pinning to white.
      - "Slow Field" spiral curves are drawn as dense additive dots
        along log-spiral arcs (gl.lineWidth is capped at 1 in ES).
      - "Arm Tint" is the star highlight inside the slow field (pink,
@@ -311,6 +337,14 @@
     document.getElementById('glfail').style.display = 'flex';
     throw new Error('WebGL 2 not supported');
   }
+  /* HDR needs a float render target. Chrome 150+ exposes one of the two
+   * color-buffer-float extensions on every GPU it supports — no 8-bit path. */
+  const floatExt = gl.getExtension('EXT_color_buffer_float') ||
+                   gl.getExtension('EXT_color_buffer_half_float');
+  if (!floatExt) {
+    document.getElementById('glfail').style.display = 'flex';
+    throw new Error('float color buffers unavailable');
+  }
 
   // ======== STAR COUNTS (GPU leaves plenty of headroom — raise freely) ========
   const N_DISK = 15000;
@@ -320,6 +354,7 @@
   const V0 = 1.8;           // flat rotation-curve speed
   const SIGMA_SQ2 = 0.125;  // 2 * sigma^2 of the arm Gaussian (physics + field draw)
   const INV_SIGMA_SQ2 = 1 / SIGMA_SQ2;
+  const SCENE_GAIN = 1.5;   // calibrated so EV 0 reads like the pre-HDR 8-bit look
 
   // ======== PER-STAR ARRAYS (physics state, CPU-side) ========
   const r_arr = new Float32Array(N_DISK);        // mean orbit radius
@@ -430,6 +465,8 @@
   let showField = false;
   let armTint = true;      // pink highlight of stars inside the slow field
   let showTrails = false;
+  let exposure = 0;        // EV on top of the calibrated scene gain
+  let saturation = 1.0;    // 1.0 = scene colours as authored
 
   let rotZ = 0;
   let tilt = 1.2;
@@ -484,12 +521,23 @@
       gl_FragColor = vec4(col, 1.0);
     }`;
 
+  /* Present pass: grade the float scene. Exposure in EV on top of the
+   * SCENE_GAIN calibration, luma-preserving saturation in linear light,
+   * Narkowicz ACES fit for the filmic roll-off above 1.0, then the exact
+   * sRGB transfer function for the 8-bit default framebuffer. */
   const FS_PRESENT = `
-    precision mediump float;
+    precision highp float;
     varying vec2 vUV;
     uniform sampler2D uTex;
+    uniform float uExposure;
+    uniform float uSaturation;
     void main() {
-      gl_FragColor = vec4(texture2D(uTex, vUV).rgb, 1.0);
+      vec3 c = texture2D(uTex, vUV).rgb * uExposure;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(l), c, uSaturation);
+      c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+      c = mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+      gl_FragColor = vec4(c, 1.0);
     }`;
 
   // Soft radial sprite matching the Canvas2D radial-gradient sprite
@@ -776,7 +824,7 @@
     for (let i = 0; i < 2; i++) {
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fw, fh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, fw, fh, 0, gl.RGBA, gl.HALF_FLOAT, null);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -956,6 +1004,8 @@
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, fboTex[cur]);
     gl.uniform1i(progPresent.u.uTex, 0);
+    gl.uniform1f(progPresent.u.uExposure, SCENE_GAIN * Math.pow(2, exposure));
+    gl.uniform1f(progPresent.u.uSaturation, saturation);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
 
@@ -1034,6 +1084,20 @@
     arm_offset = TAU / num_arms;
     armsVal.textContent = num_arms;
     instDirty = true;                 // per-instance armPhase depends on arm_offset
+  });
+
+  const exposureSlider = document.getElementById('exposure');
+  const exposureVal = document.getElementById('exposure-val');
+  exposureSlider.addEventListener('input', () => {
+    exposure = parseFloat(exposureSlider.value);
+    exposureVal.textContent = (exposure > 0 ? '+' : '') + exposure.toFixed(1);
+  });
+
+  const satSlider = document.getElementById('sat');
+  const satVal = document.getElementById('sat-val');
+  satSlider.addEventListener('input', () => {
+    saturation = parseFloat(satSlider.value);
+    satVal.textContent = saturation.toFixed(2);
   });
 
   const btnField = document.getElementById('btn-field');

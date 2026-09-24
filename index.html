@@ -9,6 +9,13 @@
 	#wrap { display: flex; height: 100vh; }
 	#stage { position: relative; flex: 1; min-width: 0; }
 	#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+	/* annotation layer (rings, tracers, labels): crisp 2D, never tone-mapped */
+	#over { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+	#glfail { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column;
+		align-items: center; justify-content: center; gap: 6px; background: #04040a;
+		color: #cfd2e0; text-align: center; padding: 24px; font: 13px/1.6 system-ui, sans-serif; }
+	#glfail[hidden] { display: none; }
+	#glfail b { color: #f0f1fa; letter-spacing: .04em; }
 	#hud { position: absolute; top: 8px; left: 10px; color: #e8eaf5; font-family: monospace;
 		font-size: 12px; text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
 	#plot { position: absolute; left: 10px; bottom: 10px; background: rgba(6,6,14,.82);
@@ -47,12 +54,21 @@
 </style>
 </head>
 <body>
+	<h2><a href="simple/simple-friction-field-webGPU.html"
+	style="position:fixed;top:38px;left:10px;z-index:10;padding:4px 8px;background:#0a0b16;color:#51f08a;">simple and stable approach via friction field (webGPU) →</a></h2>
 <div id="wrap">
 	<div id="stage">
 		<canvas id="view"></canvas>
+		<canvas id="over"></canvas>
 		<div id="hud"></div>
 		<div id="plot"><canvas id="rot" width="232" height="150"></canvas></div>
 		<div id="settle" hidden>settling…</div>
+		<div id="glfail" hidden>
+			<b>WEBGL 2 / FLOAT HDR UNAVAILABLE</b><br>
+			The scene accumulates starlight in a 16-bit float framebuffer and
+			tone-maps it (ACES). Your browser or GPU blocked WebGL 2 or float
+			color buffers. Enable hardware acceleration and reload.
+		</div>
 	</div>
 	<div id="panel">
 		<h1>Galaxy star movement</h1>
@@ -93,6 +109,9 @@
 			<label><input id="c-rot" type="checkbox" checked>rotcurve</label>
 			<label><input id="c-corot" type="checkbox">corot</label>
 		</div>
+		<h2>Image (HDR)</h2>
+		<div class="row"><label>exposure</label><input id="s-exp" type="range" min="-4" max="2" step="0.1" value="-0.7"><output id="o-exp"></output></div>
+		<div class="row"><label>saturation</label><input id="s-sat" type="range" min="0" max="2" step="0.05" value="1"><output id="o-sat"></output></div>
 		<h2>Legend</h2>
 		<div id="legend"></div>
 		<details>
@@ -157,6 +176,24 @@
 (function() {
 'use strict';
 /* journal
+ * 0.6.0 (HDR pipeline, WebGL2 — physics untouched):
+ *  - the Canvas2D render is gone. The scene (bg, glow, stars) accumulates
+ *    radiance additively in an RGBA16F ping-pong framebuffer
+ *    (EXT_color_buffer_*float), then the present pass grades it:
+ *    exposure (EV) -> luma-preserving saturation -> Narkowicz ACES roll-off
+ *    -> exact sRGB encode. Star light above 1.0 no longer clips white: it
+ *    rolls off filmically, and pulling exposure down reveals core structure
+ *    instead of a blown 255 plate. Panel sliders: exposure (-4..+2 EV,
+ *    default -0.7, calibrated from the measured 45:1 core/disk luma ratio),
+ *    saturation (0..2).
+ *  - trails now fade in float (the old 8-bit source-over fade quantized at
+ *    low luminance); glow is a 96x96 RGBA16F texture uploaded from the same
+ *    CPU bin/blur/DoG estimator, sampled linearly.
+ *  - annotations (rings, tracer paths/circles/labels) moved to a 2D overlay
+ *    canvas (#over) so they stay crisp and un-tonemapped; the rotcurve plot,
+ *    HUD, settle overlay and all camera/keys behaviour are unchanged.
+ *  - no 8-bit fallback: WebGL2 + a float color buffer are required (Chrome
+ *    150+ always has them); the page fails loudly otherwise.
  * 0.5.0 (global m=2 self-gravity variant, selfgrav.js — galaxy.js untouched):
  *  - the S5 loop's local WKB density->force line (0.4.0) is replaced by a
  *    GLOBAL m=2 Green's-function solve on the same 32-bin grid: a precomputed
@@ -261,16 +298,25 @@ var ui = {
 	bar: false, spiral: true, live: false, sg: 0, sgLast: 1,
 	stream: true, glow: true, drag: false, diff: false,
 	trails: false, rings: false, rot: true, corot: false, paused: false,
-	eta: 0.05, sig: 0.1
+	eta: 0.05, sig: 0.1,
+	exp: -0.7, sat: 1
 };
 
-var view = document.getElementById('view'), ctx = view.getContext('2d');
+var view = document.getElementById('view');
+var over = document.getElementById('over');
+var gl = view.getContext('webgl2', { alpha: false, depth: false, stencil: false,
+	antialias: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+if (!gl) { document.getElementById('glfail').hidden = false; throw new Error('WebGL2 unavailable'); }
+/* Real HDR: the scene accumulates radiance in an RGBA16F ping-pong pair
+ * (headroom far past 1.0, no 8-bit clip); the present pass grades it.
+ * No 8-bit fallback — Chrome 150+ always exposes a float color buffer. */
+var glExt = gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float');
+if (!glExt) { document.getElementById('glfail').hidden = false; throw new Error('float color buffers unavailable'); }
+var octx = over.getContext('2d');
 var rotC = document.getElementById('rot'), rctx = rotC.getContext('2d');
 var hud = document.getElementById('hud'), settleDiv = document.getElementById('settle');
 var plotDiv = document.getElementById('plot');
-var W = 800, H = 600, CX = 400, CY = 300, SC = 60, SCZ = 60, bgGrad = null;
-
-var sprites = [];
+var W = 800, H = 600, CX = 400, CY = 300, SC = 60, SCZ = 60;
 var trIdx = new Int32Array(NTR);
 var trX = new Float32Array(NTR * TRN), trY = new Float32Array(NTR * TRN), trZ = new Float32Array(NTR * TRN);
 var trHead = new Int32Array(NTR), trFill = new Int32Array(NTR);
@@ -287,10 +333,7 @@ var GN = 96, GEXT = 6.8, GSCALE = GN / (2 * GEXT), GLOW_K = 0.8, GLOW_TAU = 2;
 var gRaw = new Float32Array(GN * GN), gScratch = new Float32Array(GN * GN);
 var gFine = new Float32Array(GN * GN), gWide = new Float32Array(GN * GN);
 var gAcc = new Float32Array(GN * GN);
-var gCan = document.createElement('canvas');
-gCan.width = GN; gCan.height = GN;
-var gctx = gCan.getContext('2d');
-var gImg = gctx.createImageData(GN, GN);
+var gTexF = new Float32Array(GN * GN * 4);   /* final glow radiance, uploaded as an RGBA16F texture */
 var gArmE = new Float32Array(GN * GN), gArmF = new Float32Array(GN * GN);
 /* Radial color grade, pattern frame (static): warm yellow-white core -> neutral
  * mid-disk -> blue rim; smoothstep blends keep it band-free. Arm (DoG excess)
@@ -336,22 +379,6 @@ var binV = new Float64Array(12), binC = new Float64Array(12);
 
 function $(id) { return document.getElementById(id); }
 
-function makeSprites() {
-	var c, g, cv, cx2;
-	for (c = 0; c < 6; c++) {
-		cv = document.createElement('canvas');
-		cv.width = 16; cv.height = 16;
-		cx2 = cv.getContext('2d');
-		g = cx2.createRadialGradient(8, 8, 0, 8, 8, 8);
-		g.addColorStop(0, '#ffffff');
-		g.addColorStop(0.25, COL[c]);
-		g.addColorStop(1, 'rgba(0,0,0,0)');
-		cx2.fillStyle = g;
-		cx2.fillRect(0, 0, 16, 16);
-		sprites.push(cv);
-	}
-}
-
 function makeLegend() {
 	var el = $('legend'), h = '', c;
 	for (c = 0; c < 6; c++)
@@ -365,13 +392,11 @@ function resize() {
 	var r = view.getBoundingClientRect();
 	W = Math.max(50, r.width); H = Math.max(50, r.height);
 	view.width = Math.round(W * dpr); view.height = Math.round(H * dpr);
-	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	over.width = view.width; over.height = view.height;
+	octx.setTransform(dpr, 0, 0, dpr, 0, 0);
 	CX = W / 2; CY = H / 2;
 	SC = (Math.min(W, H) / 2 - 24) / 6.5;
-	bgGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, Math.max(W, H) / 2);
-	bgGrad.addColorStop(0, '#0a0614');
-	bgGrad.addColorStop(0.45, '#04040a');
-	bgGrad.addColorStop(1, '#010102');
+	createTargets();
 }
 window.addEventListener('resize', resize);
 
@@ -563,11 +588,282 @@ function blurBox(src, scratch, dst, r) {
 	}
 }
 
-var gMid = document.createElement('canvas');
-gMid.width = 3 * GN; gMid.height = 3 * GN;
-var gMidCtx = gMid.getContext('2d');
+/* ---- HDR render path (WebGL2) ----
+ * Scene radiance (bg + glow + stars) accumulates additively in an RGBA16F
+ * ping-pong pair — light brighter than 1.0 stays bright in the buffer,
+ * nothing clips at 255. The present pass grades it: exposure (EV) ->
+ * luma-preserving saturation -> Narkowicz ACES roll-off -> exact sRGB
+ * encode. The 8-bit default framebuffer only ever sees 0..1. */
+var TRAIL_FADE = 0.72;   /* = 1 - 0.28: alpha of the old rgba(4,4,10,.28) trail fade */
 
-function drawGlow(ag, ct, s, dtTu) {
+var VS_QUAD = `
+	attribute vec2 aQuad;
+	varying vec2 vUV;
+	void main() {
+		vUV = aQuad * 0.5 + 0.5;
+		gl_Position = vec4(aQuad, 0.0, 1.0);
+	}`;
+
+/* Background: the old #0a0614 -> #04040a -> #010102 radial base plus the warm
+ * core glow, as radiance. Mode 1 is the trails fade (float, so the low
+ * luminance no longer quantizes like the 8-bit source-over fill did). */
+var FS_BG = `
+	precision highp float;
+	varying vec2 vUV;
+	uniform vec2 uRes;
+	uniform float uMode;
+	uniform float uFade;
+	uniform float uGlowR;
+	uniform sampler2D uPrev;
+	void main() {
+		if (uMode > 0.5) {
+			vec3 p = texture2D(uPrev, vUV).rgb;
+			gl_FragColor = vec4(p * uFade + vec3(4.0, 4.0, 10.0) / 255.0 * (1.0 - uFade), 1.0);
+			return;
+		}
+		vec2 c = uRes * 0.5;
+		float d = length(vUV * uRes - c) / max(max(uRes.x, uRes.y) * 0.5, 1.0);
+		vec3 bg = mix(vec3(0.03922, 0.02353, 0.07843), vec3(0.01569, 0.01569, 0.03922), clamp(d / 0.45, 0.0, 1.0));
+		bg = mix(bg, vec3(0.00392, 0.00392, 0.00784), clamp((d - 0.45) / 0.55, 0.0, 1.0));
+		float t = length(vUV * uRes - c) / max(uGlowR, 1.0);
+		vec3 cc;
+		float ga;
+		if (t < 0.32) {
+			cc = mix(vec3(1.0, 0.87059, 0.60784), vec3(1.0, 0.62745, 0.37255), t / 0.32);
+			ga = mix(0.36, 0.10, t / 0.32);
+		} else {
+			cc = vec3(1.0, 0.41176, 0.19608);
+			ga = 0.10 * max(0.0, 1.0 - (t - 0.32) / 0.68);
+		}
+		gl_FragColor = vec4(bg * (1.0 - ga) + cc * ga, 1.0);
+	}`;
+
+/* Glow underlay: the CPU estimator's 96x96 grid (gTexF) as a 16-bit float
+ * texture, bilinear over the galaxy plane in the pattern frame — replaces
+ * the old 3x-upsampled canvas blit drawn with 'lighter'. */
+var VS_GLOW = `
+	#define GEXT 6.8
+	precision highp float;
+	attribute vec2 aQuad;
+	uniform float uCos, uSin, uCT;
+	uniform float uScale, uHalfW, uHalfH;
+	varying vec2 vUV;
+	void main() {
+		vUV = aQuad * 0.5 + 0.5;
+		float xp = aQuad.x * GEXT, yp = aQuad.y * GEXT;
+		float xr = xp * uCos + yp * uSin;
+		float yr = -xp * uSin + yp * uCos;
+		gl_Position = vec4(uScale * xr / uHalfW, -uScale * yr * uCT / uHalfH, 0.0, 1.0);
+	}`;
+
+var FS_GLOW = `
+	precision mediump float;
+	varying vec2 vUV;
+	uniform sampler2D uTex;
+	void main() {
+		gl_FragColor = vec4(texture2D(uTex, vUV).rgb, 1.0);
+	}`;
+
+/* Stars: interpolated positions from the CPU sim; class drives the sprite
+ * colour/alpha/size (uCls = COL radiance + CLS_A, uSize = CLS_S). The soft
+ * white-core sprite matches the old 16px radial-gradient canvas. */
+var VS_STAR = `
+	precision highp float;
+	attribute vec3 aPos;
+	attribute float aCls;
+	uniform float uC, uS, uCT, uST;
+	uniform float uScale, uHalfW, uHalfH, uPx;
+	uniform vec4 uCls[6];
+	uniform float uSize[6];
+	varying vec3 vColor;
+	varying float vAlpha;
+	void main() {
+		float xr = aPos.x * uC + aPos.y * uS;
+		float yr = -aPos.x * uS + aPos.y * uC;
+		gl_Position = vec4(uScale * xr / uHalfW, -uScale * (yr * uCT - aPos.z * uST) / uHalfH, 0.0, 1.0);
+		int ci = int(aCls + 0.5);
+		float dep = 1.0 - 0.25 * min(abs(aPos.z) / 3.0, 1.0);
+		gl_PointSize = uSize[ci] * (0.7 + 0.3 * dep) * uPx;
+		vColor = uCls[ci].rgb;
+		vAlpha = uCls[ci].a * dep;
+	}`;
+
+var FS_STAR = `
+	precision mediump float;
+	varying vec3 vColor;
+	varying float vAlpha;
+	void main() {
+		vec2 p = gl_PointCoord * 2.0 - 1.0;
+		float r2 = dot(p, p);
+		if (r2 > 1.0) discard;
+		float r = sqrt(r2);
+		vec3 col = mix(vec3(1.0), vColor, smoothstep(0.0, 0.25, r));
+		float fall = 1.0 - smoothstep(0.25, 1.0, r);
+		gl_FragColor = vec4(col * fall * vAlpha, 0.0);
+	}`;
+
+var FS_PRESENT = `
+	precision highp float;
+	varying vec2 vUV;
+	uniform sampler2D uTex;
+	uniform float uExposure;
+	uniform float uSaturation;
+	void main() {
+		vec3 c = texture2D(uTex, vUV).rgb * uExposure;
+		float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+		c = mix(vec3(l), c, uSaturation);
+		c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+		c = mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+		gl_FragColor = vec4(c, 1.0);
+	}`;
+
+var progBg, progGlow, progStar, progPresent;
+var quadBuf, starBuf, glowTex, vaoQuad, vaoStar;
+var fbo = [null, null], fboTex = [null, null];
+var cur = 0, glLost = false;
+var starData = new Float32Array(NMAX * 4);   /* x, y, z, class — compacted per frame */
+var uClsArr = new Float32Array(6 * 4), uSizeArr = new Float32Array(6);
+(function buildStarLuts() {
+	for (var c = 0; c < 6; c++) {
+		var h = COL[c].slice(1);
+		uClsArr[c * 4]     = parseInt(h.slice(0, 2), 16) / 255;
+		uClsArr[c * 4 + 1] = parseInt(h.slice(2, 4), 16) / 255;
+		uClsArr[c * 4 + 2] = parseInt(h.slice(4, 6), 16) / 255;
+		uClsArr[c * 4 + 3] = CLS_A[c];
+		uSizeArr[c] = CLS_S[c];
+	}
+})();
+
+function makeProgram(vsSrc, fsSrc, attrLocs) {
+	var p = gl.createProgram(), vs, fs, i, info;
+	vs = gl.createShader(gl.VERTEX_SHADER);
+	gl.shaderSource(vs, vsSrc);
+	gl.compileShader(vs);
+	if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS))
+		throw new Error('shader: ' + gl.getShaderInfoLog(vs));
+	fs = gl.createShader(gl.FRAGMENT_SHADER);
+	gl.shaderSource(fs, fsSrc);
+	gl.compileShader(fs);
+	if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS))
+		throw new Error('shader: ' + gl.getShaderInfoLog(fs));
+	gl.attachShader(p, vs);
+	gl.attachShader(p, fs);
+	for (i = 0; i < attrLocs.length; i++)
+		gl.bindAttribLocation(p, attrLocs[i][1], attrLocs[i][0]);
+	gl.linkProgram(p);
+	gl.deleteShader(vs);
+	gl.deleteShader(fs);
+	if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+		throw new Error('link: ' + gl.getProgramInfoLog(p));
+	var u = {};
+	for (i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) {
+		info = gl.getActiveUniform(p, i);
+		u[info.name] = gl.getUniformLocation(p, info.name);
+	}
+	return { p: p, u: u };
+}
+
+function initGL() {
+	progBg = makeProgram(VS_QUAD, FS_BG, [['aQuad', 0]]);
+	progGlow = makeProgram(VS_GLOW, FS_GLOW, [['aQuad', 0]]);
+	progStar = makeProgram(VS_STAR, FS_STAR, [['aPos', 0], ['aCls', 1]]);
+	progPresent = makeProgram(VS_QUAD, FS_PRESENT, [['aQuad', 0]]);
+
+	quadBuf = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+	starBuf = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, starBuf);
+	gl.bufferData(gl.ARRAY_BUFFER, starData, gl.DYNAMIC_DRAW);
+
+	glowTex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, glowTex);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+	vaoQuad = gl.createVertexArray();
+	gl.bindVertexArray(vaoQuad);
+	gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+	gl.enableVertexAttribArray(0);
+	gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+	gl.bindVertexArray(null);
+
+	vaoStar = gl.createVertexArray();
+	gl.bindVertexArray(vaoStar);
+	gl.bindBuffer(gl.ARRAY_BUFFER, starBuf);
+	gl.enableVertexAttribArray(0);
+	gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
+	gl.enableVertexAttribArray(1);
+	gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
+	gl.bindVertexArray(null);
+}
+
+function createTargets() {
+	var i, t, fb, w = view.width, h = view.height;
+	for (i = 0; i < 2; i++) {
+		if (fboTex[i]) gl.deleteTexture(fboTex[i]);
+		if (fbo[i]) gl.deleteFramebuffer(fbo[i]);
+	}
+	for (i = 0; i < 2; i++) {
+		t = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, t);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		fb = gl.createFramebuffer();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+		fboTex[i] = t;
+		fbo[i] = fb;
+	}
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	cur = 0;
+}
+
+function drawGlowQuad(ag, ct) {
+	var psi = (ui.bar ? P.bar.om : P.spiral.om) * st.t;
+	gl.useProgram(progGlow.p);
+	gl.bindVertexArray(vaoQuad);
+	var u = progGlow.u;
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, glowTex);
+	gl.uniform1i(u.uTex, 0);
+	gl.uniform1f(u.uCos, Math.cos(ag - psi));
+	gl.uniform1f(u.uSin, Math.sin(ag - psi));
+	gl.uniform1f(u.uCT, ct);
+	gl.uniform1f(u.uScale, SCZ * (window.devicePixelRatio || 1));
+	gl.uniform1f(u.uHalfW, view.width * 0.5);
+	gl.uniform1f(u.uHalfH, view.height * 0.5);
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function drawStars(m, cb, sb, ct, st_) {
+	var dpr = window.devicePixelRatio || 1;
+	gl.useProgram(progStar.p);
+	gl.bindVertexArray(vaoStar);
+	var u = progStar.u;
+	gl.uniform1f(u.uC, cb);
+	gl.uniform1f(u.uS, sb);
+	gl.uniform1f(u.uCT, ct);
+	gl.uniform1f(u.uST, st_);
+	gl.uniform1f(u.uScale, SCZ * dpr);
+	gl.uniform1f(u.uHalfW, view.width * 0.5);
+	gl.uniform1f(u.uHalfH, view.height * 0.5);
+	gl.uniform1f(u.uPx, dpr);
+	gl.uniform4fv(u['uCls[0]'], uClsArr);
+	gl.uniform1fv(u['uSize[0]'], uSizeArr);
+	gl.drawArrays(gl.POINTS, 0, m);
+}
+
+view.addEventListener('webglcontextlost', function(e) { e.preventDefault(); glLost = true; }, false);
+view.addEventListener('webglcontextrestored', function() { initGL(); resize(); glLost = false; }, false);
+
+function drawGlow(dtTu) {
 	var i, gx, gy, c, w, e, v, j = 0, R, xp, yp, xt;
 	var psi = (ui.bar ? P.bar.om : P.spiral.om) * st.t;
 	var cps = Math.cos(psi), sps = Math.sin(psi);
@@ -603,119 +899,129 @@ function drawGlow(ag, ct, s, dtTu) {
 	}
 	blurBox(gFine, gScratch, gWide, 2);
 	blurBox(gArmE, gScratch, gArmF, 2);
-	var d = gImg.data;
+	/* Final radiance = LUT colour * gWide * 0.85 * 0.85: the old pipeline
+	 * baked 0.85 into the image alpha AND drew with globalAlpha 0.85 under
+	 * 'lighter' — the product is the additive light the float scene gets. */
 	for (i = 0; i < GN * GN; i++) {
-		v = gWide[i] * 0.85;
+		v = gWide[i] * 0.7225;
 		var tA = (gArmF[i] > 1 ? 1 : gArmF[i]) * ARM_T;
-		d[j] = gLutR[i] + (ARM_R - gLutR[i]) * tA;
-		d[j + 1] = gLutG[i] + (ARM_G - gLutG[i]) * tA;
-		d[j + 2] = gLutB[i] + (ARM_B - gLutB[i]) * tA;
-		d[j + 3] = 255 * v;
+		gTexF[j]     = (gLutR[i] + (ARM_R - gLutR[i]) * tA) * v / 255;
+		gTexF[j + 1] = (gLutG[i] + (ARM_G - gLutG[i]) * tA) * v / 255;
+		gTexF[j + 2] = (gLutB[i] + (ARM_B - gLutB[i]) * tA) * v / 255;
+		gTexF[j + 3] = 0;
 		j += 4;
 	}
-	gctx.putImageData(gImg, 0, 0);
-	gMidCtx.clearRect(0, 0, 3 * GN, 3 * GN);
-	gMidCtx.drawImage(gCan, 0, 0, 3 * GN, 3 * GN);
-	ctx.globalCompositeOperation = 'lighter';
-	ctx.globalAlpha = 0.85;
-	ctx.save();
-	var cbg = Math.cos(ag - psi), sbg = Math.sin(ag - psi);
-	ctx.transform(s * cbg, -s * ct * sbg, s * sbg, s * ct * cbg, CX, CY);
-	ctx.drawImage(gMid, -GEXT, -GEXT, 2 * GEXT, 2 * GEXT);
-	ctx.restore();
-	ctx.globalAlpha = 1;
 }
 
 function render() {
-	var i, sx, sy, az, dep, size, spr;
-	var ct = Math.cos(ui.tilt), st_ = Math.sin(ui.tilt);
+	if (glLost) return;
+	var i, ct = Math.cos(ui.tilt), st_ = Math.sin(ui.tilt);
 	var a = ui.yaw + (ui.corot ? (ui.bar ? P.bar.om : P.spiral.om) * st.t : 0);
 	var cb = Math.cos(a), sb = Math.sin(a);
 	SCZ = SC * ui.zoom;
-	if (ui.trails) {
-		ctx.globalCompositeOperation = 'source-over';
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = 'rgba(4,4,10,0.28)';
-		ctx.fillRect(0, 0, W, H);
-	} else {
-		ctx.globalCompositeOperation = 'source-over';
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = bgGrad;
-		ctx.fillRect(0, 0, W, H);
-		var cg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 160 * ui.zoom);
-		cg.addColorStop(0, 'rgba(255,222,155,0.36)');
-		cg.addColorStop(0.32, 'rgba(255,160,95,0.10)');
-		cg.addColorStop(1, 'rgba(255,105,50,0)');
-		ctx.fillStyle = cg;
-		ctx.fillRect(0, 0, W, H);
-	}
-	if (ui.rings) drawRings(ct);
-	if (ui.glow && !ui.trails) drawGlow(a, ct, SCZ, lastDtTu);
-	ctx.globalCompositeOperation = 'lighter';
+	var fw = view.width, fh = view.height;
+
+	/* Interpolated star positions, compacted (stream class dropped when
+	 * hidden) into the one dynamic buffer; the stale tail is never drawn. */
 	var n = st.n, x = st.x, y = st.y, z = st.z, cls = st.cls;
-	var showStream = ui.stream;
+	var showStream = ui.stream, m = 0;
 	for (i = 0; i < n; i++) {
-		var c = cls[i];
-		if (c === 4 && !showStream) continue;
-		var xi = prevX[i] + (x[i] - prevX[i]) * alphaSim;
-		var yi = prevY[i] + (y[i] - prevY[i]) * alphaSim;
-		var zi = prevZ[i] + (z[i] - prevZ[i]) * alphaSim;
-		var xr = xi * cb + yi * sb, yr = -xi * sb + yi * cb;
-		az = zi < 0 ? -zi : zi;
-		dep = 1 - 0.25 * Math.min(az / 3, 1);
-		sx = CX + SCZ * xr;
-		sy = CY + SCZ * (yr * ct - zi * st_);
-		if (sx < -8 || sx > W + 8 || sy < -8 || sy > H + 8) continue;
-		size = CLS_S[c] * (0.7 + 0.3 * dep);
-		ctx.globalAlpha = dep * CLS_A[c];
-		spr = sprites[c];
-		ctx.drawImage(spr, sx - size / 2, sy - size / 2, size, size);
+		if (cls[i] === 4 && !showStream) continue;
+		starData[m * 4]     = prevX[i] + (x[i] - prevX[i]) * alphaSim;
+		starData[m * 4 + 1] = prevY[i] + (y[i] - prevY[i]) * alphaSim;
+		starData[m * 4 + 2] = prevZ[i] + (z[i] - prevZ[i]) * alphaSim;
+		starData[m * 4 + 3] = cls[i];
+		m++;
 	}
-	ctx.globalAlpha = 1;
-	ctx.globalCompositeOperation = 'source-over';
+	gl.bindBuffer(gl.ARRAY_BUFFER, starBuf);
+	gl.bufferSubData(gl.ARRAY_BUFFER, 0, starData);
+
+	/* --- scene pass: radiance into the float FBO --- */
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[cur]);
+	gl.viewport(0, 0, fw, fh);
+	gl.disable(gl.BLEND);
+	gl.useProgram(progBg.p);
+	gl.bindVertexArray(vaoQuad);
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, fboTex[1 - cur]);
+	gl.uniform2f(progBg.u.uRes, fw, fh);
+	gl.uniform1f(progBg.u.uMode, ui.trails ? 1 : 0);
+	gl.uniform1f(progBg.u.uFade, TRAIL_FADE);
+	gl.uniform1f(progBg.u.uGlowR, 160 * ui.zoom * (window.devicePixelRatio || 1));
+	gl.uniform1i(progBg.u.uPrev, 0);
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+	gl.enable(gl.BLEND);
+	gl.blendFunc(gl.ONE, gl.ONE);
+	if (ui.glow && !ui.trails) {
+		drawGlow(lastDtTu);
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, glowTex);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, GN, GN, 0, gl.RGBA, gl.FLOAT, gTexF);
+		drawGlowQuad(a, ct);
+	}
+	drawStars(m, cb, sb, ct, st_);
+	gl.bindVertexArray(null);
+
+	/* --- present pass: grade (exposure -> saturation -> ACES -> sRGB) --- */
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	gl.viewport(0, 0, fw, fh);
+	gl.useProgram(progPresent.p);
+	gl.bindVertexArray(vaoQuad);
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, fboTex[cur]);
+	gl.uniform1f(progPresent.u.uExposure, Math.pow(2, ui.exp));
+	gl.uniform1f(progPresent.u.uSaturation, ui.sat);
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+	gl.bindVertexArray(null);
+	cur = 1 - cur;
+
+	/* --- annotations on the 2D overlay: crisp, never tone-mapped --- */
+	octx.clearRect(0, 0, W, H);
+	if (ui.rings) drawRings(ct);
 	drawTracers(cb, sb, ct, st_);
 	if (ui.rot && frame % 10 === 0) drawRot();
 }
 
 function drawRings(ct) {
 	var d, k, r;
-	ctx.lineWidth = 1;
-	ctx.font = '10px monospace';
+	octx.lineWidth = 1;
+	octx.font = '10px monospace';
 	for (d = 0; d < ringDefs.length; d++) {
 		if (ringDefs[d][5] === 'bar' && !ui.bar) continue;
-		ctx.strokeStyle = ringDefs[d][1];
-		ctx.fillStyle = ringDefs[d][1];
-		ctx.setLineDash(ringDefs[d][3] || []);
+		octx.strokeStyle = ringDefs[d][1];
+		octx.fillStyle = ringDefs[d][1];
+		octx.setLineDash(ringDefs[d][3] || []);
 		for (k = 0; k < ringDefs[d][0].length; k++) {
 			r = ringDefs[d][0][k];
 			if (r > 6.5) continue;
-			ctx.beginPath();
-			ctx.ellipse(CX, CY, r * SCZ, Math.max(1, r * SCZ * ct), 0, 0, 6.2832);
-			ctx.stroke();
-			ctx.fillText(ringDefs[d][2], CX + r * SCZ * 0.71 + ringDefs[d][4], CY - r * SCZ * ct * 0.71 - 3);
+			octx.beginPath();
+			octx.ellipse(CX, CY, r * SCZ, Math.max(1, r * SCZ * ct), 0, 0, 6.2832);
+			octx.stroke();
+			octx.fillText(ringDefs[d][2], CX + r * SCZ * 0.71 + ringDefs[d][4], CY - r * SCZ * ct * 0.71 - 3);
 		}
 	}
-	ctx.setLineDash([]);
+	octx.setLineDash([]);
 }
 
 function drawTracers(cb, sb, ct, st_) {
 	var t, j, idx, px, py;
-	ctx.lineWidth = 1.2;
+	octx.lineWidth = 1.2;
 	for (t = 0; t < NTR; t++) {
 		if (trFill[t] < 2) continue;
-		ctx.strokeStyle = t === 6 ? '#54f6ff' : (t === 1 || t === 7) ? '#7fb8ff' : '#ffffff';
-		ctx.globalAlpha = 0.75;
-		ctx.beginPath();
+		octx.strokeStyle = t === 6 ? '#54f6ff' : (t === 1 || t === 7) ? '#7fb8ff' : '#ffffff';
+		octx.globalAlpha = 0.75;
+		octx.beginPath();
 		for (j = 0; j < trFill[t]; j++) {
 			idx = (trHead[t] - trFill[t] + j + TRN * 2) % TRN;
 			project(trX[t * TRN + idx], trY[t * TRN + idx], trZ[t * TRN + idx], cb, sb, ct, st_, ptmp);
 			px = ptmp[0]; py = ptmp[1];
-			if (j === 0) ctx.moveTo(px, py);
-			else ctx.lineTo(px, py);
+			if (j === 0) octx.moveTo(px, py);
+			else octx.lineTo(px, py);
 		}
-		ctx.stroke();
+		octx.stroke();
 	}
-	ctx.globalAlpha = 1;
+	octx.globalAlpha = 1;
 	/* bar frame: xb along the potential hill (Om_b*t), yb along the well. The
 	 * bar body (x1 orbits) lies along the WELL - check-arm-phase.js part D. */
 	var ba = P.bar.om * st.t, cbb = Math.cos(ba), sbb = Math.sin(ba);
@@ -727,13 +1033,13 @@ function drawTracers(cb, sb, ct, st_) {
 		var R = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i]);
 		var xb = st.x[i] * cbb + st.y[i] * sbb, yb = -st.x[i] * sbb + st.y[i] * cbb;
 		var captured = Math.abs(yb) > 1.5 * Math.abs(xb) && R < 1.8;
-		ctx.strokeStyle = captured ? '#51f08a' : '#ffd54a';
-		ctx.beginPath();
-		ctx.arc(px, py, captured ? 6 : 4, 0, 6.2832);
-		ctx.stroke();
-		ctx.fillStyle = '#fff';
-		ctx.font = '10px monospace';
-		ctx.fillText(String(t), px + 7, py - 5);
+		octx.strokeStyle = captured ? '#51f08a' : '#ffd54a';
+		octx.beginPath();
+		octx.arc(px, py, captured ? 6 : 4, 0, 6.2832);
+		octx.stroke();
+		octx.fillStyle = '#fff';
+		octx.font = '10px monospace';
+		octx.fillText(String(t), px + 7, py - 5);
 	}
 }
 
@@ -903,8 +1209,8 @@ function sgTicking() {
 }
 
 function init() {
-	makeSprites();
 	makeLegend();
+	initGL();
 	resize();
 	bindCamera();
 	SelfGrav.ensure(P);
@@ -924,6 +1230,8 @@ function init() {
 	});
 	bindSlider('s-eta', function(v) { ui.eta = v; return v.toFixed(3); });
 	bindSlider('s-sig', function(v) { ui.sig = v; return v.toFixed(2); });
+	bindSlider('s-exp', function(v) { ui.exp = v; return (v > 0 ? '+' : '') + v.toFixed(1); });
+	bindSlider('s-sat', function(v) { ui.sat = v; return v.toFixed(2); });
 	bindCheck('c-bar', 'bar', snapEJ);
 	bindCheck('c-spiral', 'spiral', snapEJ);
 	$('sel-sg').addEventListener('change', function(e) {

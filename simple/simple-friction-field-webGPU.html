@@ -1,0 +1,1602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Density Waves — Spiral Arms Without Gravity (WebGPU HDR)</title>
+<style>
+	:root {
+		--bg: #050208;
+		--fg: #f5f0ff;
+		--muted: #8a7da5;
+		--muted-dim: #5a4d75;
+		--accent: #ff7ba8;
+		--accent2: #6bd5ff;
+		--accent3: #ffd870;
+		--glass: rgba(20, 10, 35, 0.60);
+		--border: rgba(255, 255, 255, 0.08);
+	}
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body {
+		height: 100%;
+		overflow: hidden;
+		background: #000;
+		color: var(--fg);
+		font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+		cursor: grab;
+		user-select: none;
+		-webkit-user-select: none;
+	}
+	body.dragging { cursor: grabbing; }
+	#sky {
+		position: fixed;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		display: block;
+		touch-action: none;
+	}
+	.hud { position: fixed; pointer-events: none; z-index: 10; }
+	.hud > * { pointer-events: auto; }
+	.hud-top-left { top: 22px; left: 22px; max-width: 330px; }
+	.hud-top-right { top: 22px; right: 22px; text-align: right; }
+	.hud-top-center {
+		top: 22px; left: 50%; transform: translateX(-50%);
+		text-align: center;
+	}
+	.hud-bottom {
+		bottom: 22px; left: 50%; transform: translateX(-50%);
+		text-align: center; color: var(--muted-dim);
+		font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase;
+		white-space: nowrap;
+	}
+	.panel {
+		background: var(--glass);
+		backdrop-filter: blur(20px) saturate(120%);
+		-webkit-backdrop-filter: blur(20px) saturate(120%);
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		padding: 18px 20px;
+		box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.6);
+	}
+	.badge-hdr {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 10px;
+		border-radius: 20px;
+		border: 1px solid rgba(107, 213, 255, 0.3);
+		background: rgba(107, 213, 255, 0.08);
+		color: var(--accent2);
+		font-size: 9px;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		font-weight: 600;
+	}
+	.badge-hdr .dot {
+		width: 6px; height: 6px; border-radius: 50%;
+		background: var(--accent2);
+		box-shadow: 0 0 8px var(--accent2);
+	}
+	.title {
+		font-weight: 800;
+		font-size: 26px;
+		line-height: 0.95;
+		letter-spacing: -0.02em;
+		background: linear-gradient(135deg, #fff 0%, #ffd870 35%, #ff7ba8 65%, #6bd5ff 100%);
+		-webkit-background-clip: text;
+		background-clip: text;
+		-webkit-text-fill-color: transparent;
+		color: transparent;
+		margin-bottom: 4px;
+	}
+	.subtitle {
+		font-size: 9px; color: var(--muted);
+		letter-spacing: 0.22em; text-transform: uppercase;
+		margin-bottom: 14px; line-height: 1.4;
+	}
+	.stats {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 2px 16px;
+		font-size: 11px;
+		margin-bottom: 4px;
+	}
+	.stat {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 4px 0;
+		border-bottom: 1px dashed rgba(255,255,255,0.04);
+	}
+	.stat-label { color: var(--muted); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; }
+	.stat-value { color: var(--fg); font-weight: 500; font-feature-settings: 'tnum'; }
+	.controls { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+	.control-row { display: flex; flex-direction: column; gap: 6px; }
+	.control-label {
+		font-size: 9px; color: var(--muted);
+		letter-spacing: 0.18em; text-transform: uppercase;
+		display: flex; justify-content: space-between; align-items: center;
+	}
+	.control-value { color: var(--fg); font-weight: 500; }
+	input[type=range] {
+		-webkit-appearance: none; appearance: none;
+		width: 100%; height: 4px;
+		background: rgba(255,255,255,0.06);
+		border-radius: 2px; outline: none; cursor: pointer;
+	}
+	input[type=range]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		width: 14px; height: 14px;
+		background: linear-gradient(135deg, #ff7ba8, #ffd870);
+		border-radius: 50%; cursor: pointer;
+		box-shadow: 0 0 12px rgba(255, 123, 168, 0.5);
+		border: none;
+	}
+	input[type=range]::-moz-range-thumb {
+		width: 14px; height: 14px;
+		background: linear-gradient(135deg, #ff7ba8, #ffd870);
+		border-radius: 50%; cursor: pointer; border: none;
+	}
+	.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+	.btn {
+		flex: 1;
+		background: rgba(255,255,255,0.025);
+		border: 1px solid var(--border);
+		color: var(--muted);
+		padding: 8px 8px;
+		border-radius: 8px;
+		font-family: inherit;
+		font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		text-align: center;
+		text-decoration: none;
+	}
+	.btn:hover { background: rgba(255,255,255,0.06); color: var(--fg); }
+	.btn.active {
+		background: rgba(107, 213, 255, 0.12);
+		border-color: rgba(107, 213, 255, 0.4);
+		color: var(--accent2);
+		box-shadow: 0 0 16px rgba(107, 213, 255, 0.2);
+	}
+	.legend {
+		display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+		background: var(--glass);
+		backdrop-filter: blur(20px) saturate(120%);
+		-webkit-backdrop-filter: blur(20px) saturate(120%);
+		border: 1px solid var(--border);
+		border-radius: 12px;
+		padding: 14px 18px;
+	}
+	.legend-item {
+		display: flex; align-items: center; gap: 10px;
+		font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+		color: var(--muted);
+	}
+	.legend-item .ldot { width: 6px; height: 6px; border-radius: 50%; }
+	.legend-item .count {
+		color: var(--fg); font-weight: 500;
+		min-width: 60px; text-align: right;
+		font-feature-settings: 'tnum';
+	}
+	.legend-item.disk .ldot { background: #b4c8ff; box-shadow: 0 0 8px #b4c8ff; }
+	.legend-item.arm .ldot { background: #ff7ba8; box-shadow: 0 0 8px #ff7ba8; }
+	.legend-item.bulge .ldot { background: #ffd870; box-shadow: 0 0 8px #ffd870; }
+	#gpufail {
+		position: fixed; inset: 0; z-index: 100;
+		display: none; align-items: center; justify-content: center;
+		background: rgba(5, 2, 8, 0.85);
+		backdrop-filter: blur(10px);
+	}
+	#gpufail .panel { max-width: 480px; text-align: center; font-size: 12px; line-height: 1.8; color: var(--muted); }
+	#gpufail .panel b { color: var(--fg); letter-spacing: 0.1em; }
+	@media (max-width: 720px) {
+		.hud-top-left { max-width: calc(100% - 24px); top: 12px; left: 12px; }
+		.hud-top-right { top: auto; bottom: 12px; right: 12px; }
+		.hud-top-center { display: none; }
+		.title { font-size: 20px; }
+		.hud-bottom { display: none; }
+		.panel { padding: 14px 16px; }
+		.stats { font-size: 10px; }
+	}
+</style>
+</head>
+<body>
+	<canvas id="sky"></canvas>
+
+	<div class="hud hud-top-center">
+		<div class="badge-hdr" id="hdr-badge-btn">
+			<div class="dot"></div>
+			<span id="hdr-badge-text">WebGPU HDR · 16-bit Float</span>
+		</div>
+	</div>
+
+	<div class="hud hud-top-left">
+		<div class="panel">
+			<div class="title">Density Waves</div>
+			<div class="subtitle">Slow-field damping · WebGPU HDR Rendering</div>
+
+			<div class="stats">
+				<div class="stat"><span class="stat-label">Stars</span><span class="stat-value" id="stat-stars">—</span></div>
+				<div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="stat-fps">—</span></div>
+				<div class="stat"><span class="stat-label">Pattern Ω</span><span class="stat-value" id="stat-omega">0.15</span></div>
+				<div class="stat"><span class="stat-label">Pitch</span><span class="stat-value" id="stat-pitch">15°</span></div>
+			</div>
+
+			<div class="controls">
+				<div class="control-row">
+					<div class="control-label">
+						<span>Time Flow</span>
+						<span class="control-value" id="speed-val">1.00×</span>
+					</div>
+					<input type="range" id="speed" min="0" max="500" value="100">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Damping Strength</span>
+						<span class="control-value" id="damp-val">0.70</span>
+					</div>
+					<input type="range" id="damp" min="0" max="90" value="70">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Orbit Eccentricity</span>
+						<span class="control-value" id="ecc-val">0.20</span>
+					</div>
+					<input type="range" id="ecc" min="0" max="60" value="20">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Pattern Speed</span>
+						<span class="control-value" id="omega-val">0.15</span>
+					</div>
+					<input type="range" id="omega" min="0" max="80" value="15">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Pitch Angle</span>
+						<span class="control-value" id="pitch-val">15°</span>
+					</div>
+					<input type="range" id="pitch" min="5" max="35" value="15">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Spiral Arms</span>
+						<span class="control-value" id="arms-val">2</span>
+					</div>
+					<input type="range" id="arms" min="1" max="5" value="2">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Exposure (EV)</span>
+						<span class="control-value" id="exposure-val">+0.0 EV</span>
+					</div>
+					<input type="range" id="exposure" min="-4" max="4" step="0.1" value="0">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>Saturation</span>
+						<span class="control-value" id="sat-val">1.00×</span>
+					</div>
+					<input type="range" id="sat" min="0" max="2.5" step="0.05" value="1">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label">
+						<span>HDR Headroom</span>
+						<span class="control-value" id="headroom-val">4.0×</span>
+					</div>
+					<input type="range" id="headroom" min="1" max="6" step="0.5" value="4">
+				</div>
+
+				<div class="control-row">
+					<div class="control-label"><span>Visualize</span></div>
+					<div class="btn-row">
+						<button class="btn" id="btn-field">Slow Field</button>
+						<button class="btn active" id="btn-tint" title="Tint stars inside slow field pink. Off: all disk stars blue, arms appear purely via star traffic jam">Arm Tint</button>
+						<button class="btn" id="btn-trails">Trails</button>
+						<button class="btn" id="btn-reset">Reset View</button>
+					</div>
+				</div>
+
+				<div class="control-row" style="margin-top: 4px;">
+					<div class="btn-row">
+						<a class="btn" href="simple-friction-field-webGL.html" style="font-size:8px;">Switch to WebGL2</a>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="hud hud-top-right">
+		<div class="legend">
+			<div class="legend-item disk"><div class="ldot"></div><span>Disk Stars</span><span class="count" id="cnt-disk">—</span></div>
+			<div class="legend-item arm"><div class="ldot"></div><span>Arm Jam</span><span class="count" id="cnt-arm">—</span></div>
+			<div class="legend-item bulge"><div class="ldot"></div><span>Bulge</span><span class="count" id="cnt-bulge">—</span></div>
+		</div>
+	</div>
+
+	<div class="hud hud-bottom">
+		Drag to rotate · Scroll to zoom · WebGPU HDR 16-bit Float · Color-Preserving Tone Map
+	</div>
+
+	<div id="gpufail">
+		<div class="panel">
+			<b>WEBGPU HDR RENDERING UNAVAILABLE</b><br><br>
+			This simulation requires WebGPU with extended dynamic range HDR presentation
+			(<code>rgba16float</code> canvas + extended tone mapping mode).<br><br>
+			Please use a modern browser (Chrome 129+ / Chrome 150+) with hardware acceleration enabled.
+		</div>
+	</div>
+
+	<script>
+	'use strict';
+
+	/* ============================================================
+	   DENSITY WAVES — WebGPU HDR Implementation
+	   - Physics: Density-wave damping + eccentric orbits (CPU).
+	     LUT acceleration for exp and log1p transcendentals.
+	   - True WebGPU Native HDR:
+	     - Canvas context configured with format 'rgba16float' and
+	       toneMapping: { mode: 'extended' }, unlocking full HDR display
+	       luminance without clamping to standard SDR range.
+	     - Scene accumulates starlight into RGBA16F float ping-pong textures.
+	     - Chromaticity-preserving HDR tonemapper:
+	       Rather than naive per-channel compression (which crushes bright
+	       stars into white above 255), we compress peak intensity while
+	       preserving exact R:G:B ratios in linear light.
+	       Stars maintain vivid celestial colors (electric blue, neon pink,
+	       warm amber gold) even under extreme overlap and high exposure.
+	   ============================================================ */
+
+	const TAU = Math.PI * 2;
+	const canvas = document.getElementById('sky');
+
+	const N_DISK = 15000;
+	const N_BULGE = 4000;
+	const FIELD_SAMPLES = 1500;
+	const CAM_DIST = 12.0;
+	const V0 = 1.8;
+	const SIGMA_SQ2 = 0.125;
+	const INV_SIGMA_SQ2 = 1.0 / SIGMA_SQ2;
+	const SCENE_GAIN = 1.5;
+
+	// ======== PER-STAR ARRAYS (physics state, CPU-side) ========
+	const r_arr = new Float32Array(N_DISK);
+	const theta_arr = new Float32Array(N_DISK);
+	const z_amp_arr = new Float32Array(N_DISK);
+	const z_phase_arr = new Float32Array(N_DISK);
+	const brightness_arr = new Float32Array(N_DISK);
+	const ecc_u_arr = new Float32Array(N_DISK);
+	const peri_arr = new Float32Array(N_DISK);
+	const logr_arr = new Float32Array(N_DISK);
+
+	const bulge_r = new Float32Array(N_BULGE);
+	const bulge_theta = new Float32Array(N_BULGE);
+	const bulge_node = new Float32Array(N_BULGE);
+	const bulge_incl = new Float32Array(N_BULGE);
+	const bulge_ecc_u = new Float32Array(N_BULGE);
+	const bulge_peri = new Float32Array(N_BULGE);
+
+	const EXP_N = 1024, EXP_SCALE = EXP_N / 20;
+	const exp_lut = new Float32Array(EXP_N + 1);
+	const LOG1P_LO = -0.6, LOG1P_N = 512, LOG1P_SCALE = LOG1P_N / 1.2;
+	const log1p_lut = new Float32Array(LOG1P_N + 1);
+	for (let i = 0; i <= EXP_N; i++) exp_lut[i] = Math.exp(-i / EXP_SCALE);
+	for (let i = 0; i <= LOG1P_N; i++) log1p_lut[i] = Math.log(1 + LOG1P_LO + i / LOG1P_SCALE);
+
+	function initPhysics() {
+		for (let i = 0; i < N_DISK; i++) {
+			const r = 0.2 + Math.pow(Math.random(), 0.6) * 6.5;
+			r_arr[i] = r;
+			logr_arr[i] = Math.log(r);
+			theta_arr[i] = Math.random() * TAU;
+			z_amp_arr[i] = (0.05 + 0.35 * Math.random()) * Math.exp(-r * 0.1);
+			z_phase_arr[i] = Math.random() * TAU;
+			brightness_arr[i] = 0.4 + 0.6 * Math.random();
+			ecc_u_arr[i] = Math.random();
+			peri_arr[i] = Math.random() * TAU;
+		}
+		for (let i = 0; i < N_BULGE; i++) {
+			bulge_r[i] = 0.1 + Math.pow(Math.random(), 2.0) * 0.8;
+			bulge_theta[i] = Math.random() * TAU;
+			bulge_node[i] = Math.random() * TAU;
+			bulge_incl[i] = Math.acos(2 * Math.random() - 1);
+			bulge_ecc_u[i] = Math.random();
+			bulge_peri[i] = Math.random() * TAU;
+		}
+	}
+	initPhysics();
+
+	const diskStatic = new Float32Array(N_DISK * 6);
+	const bulgeStatic = new Float32Array(N_BULGE * 5);
+	for (let i = 0; i < N_DISK; i++) {
+		diskStatic[i * 6]     = r_arr[i];
+		diskStatic[i * 6 + 1] = ecc_u_arr[i];
+		diskStatic[i * 6 + 2] = peri_arr[i];
+		diskStatic[i * 6 + 3] = brightness_arr[i];
+		diskStatic[i * 6 + 4] = z_amp_arr[i];
+		diskStatic[i * 6 + 5] = z_phase_arr[i];
+	}
+	for (let i = 0; i < N_BULGE; i++) {
+		bulgeStatic[i * 5]     = bulge_r[i];
+		bulgeStatic[i * 5 + 1] = bulge_ecc_u[i];
+		bulgeStatic[i * 5 + 2] = bulge_peri[i];
+		bulgeStatic[i * 5 + 3] = bulge_node[i];
+		bulgeStatic[i * 5 + 4] = bulge_incl[i];
+	}
+
+	const FAN_N = 7;
+	const ARMS_MAX = 5;
+	const fanOff = new Float32Array(FAN_N);
+	const fanAlpha = new Float32Array(FAN_N);
+	const fanSize = new Float32Array(FAN_N);
+	fanOff[0] = 0; fanAlpha[0] = 0.5; fanSize[0] = 4.5;
+	for (let i = -3, k = 1; i <= 3; i++) {
+		if (i === 0) continue;
+		const off = i * 0.12;
+		fanOff[k] = off;
+		fanAlpha[k] = Math.exp(-(off * off) / SIGMA_SQ2) * 0.4 * 0.5;
+		fanSize[k] = 3.0;
+		k++;
+	}
+
+	// ======== SIMULATION STATE ========
+	let speed = 1.0;
+	let damping_strength = 0.70;
+	let ecc_max = 0.20;
+	let Omega_p = 0.15;
+	let pitch_deg = 15;
+	let num_arms = 2;
+	let arm_offset = TAU / num_arms;
+	let pattern_phase = 0;
+	let armCount = 0;
+
+	let showField = false;
+	let armTint = true;
+	let showTrails = false;
+	let exposure = 0.0;     // EV stops (-4.0 to +4.0)
+	let saturation = 1.0;   // 0.0 = mono, 1.0 = natural, 2.5 = vivid
+
+	let rotZ = 0.0;
+	let tilt = 1.2;
+	let zoom = 1.0;
+	let tRotZ = rotZ, tTilt = tilt, tZoom = zoom;
+
+	let isDragging = false;
+	let lastX = 0, lastY = 0;
+	let instN = num_arms * FAN_N;
+	let instDirty = true;
+
+	// ======== WGSL SHADERS ========
+
+	const WGSL_DISK = `
+		struct CameraUniforms {
+			cosR: f32,
+			sinR: f32,
+			cosT: f32,
+			sinT: f32,
+			scale: f32,
+			halfW: f32,
+			halfH: f32,
+			camDist: f32,
+			tanPitch: f32,
+			patternPhase: f32,
+			armOffset: f32,
+			inv2Sig2: f32,
+			eccMax: f32,
+			pointSize: f32,
+			armTint: f32,
+			_pad: f32,
+		};
+
+		struct StarVertexOutput {
+			@builtin(position) position: vec4<f32>,
+			@location(0) color: vec3<f32>,
+			@location(1) alpha: f32,
+			@location(2) quadCoord: vec2<f32>,
+		};
+
+		@group(0) @binding(0) var<uniform> cam: CameraUniforms;
+
+		@vertex
+		fn vs_disk(
+			@builtin(vertex_index) vi: u32,
+			@location(0) th: f32,
+			@location(1) aA: vec4<f32>,
+			@location(2) aB: vec2<f32>
+		) -> StarVertexOutput {
+			var quad = array<vec2<f32>, 6>(
+				vec2<f32>(-1.0, -1.0),
+				vec2<f32>( 1.0, -1.0),
+				vec2<f32>(-1.0,  1.0),
+				vec2<f32>(-1.0,  1.0),
+				vec2<f32>( 1.0, -1.0),
+				vec2<f32>( 1.0,  1.0)
+			);
+			let qc = quad[vi];
+
+			let rho = aA.x * (1.0 + cam.eccMax * aA.y * cos(th - aA.z));
+			let px = rho * cos(th);
+			let py = rho * sin(th);
+			let pz = aB.x * sin(2.0 * th + aB.y);
+
+			let rx = px * cam.cosR - py * cam.sinR;
+			let ry = px * cam.sinR + py * cam.cosR;
+			let pjy = ry * cam.cosT - pz * cam.sinT;
+			let pjz = ry * cam.sinT + pz * cam.cosT;
+
+			let ps = cam.camDist / (cam.camDist + pjz);
+			let screen = vec2<f32>(rx, pjy) * (cam.scale * ps);
+
+			var dth = (th - (log(rho) / cam.tanPitch + cam.patternPhase)) % cam.armOffset;
+			if (dth < 0.0) { dth += cam.armOffset; }
+			if (dth > cam.armOffset * 0.5) { dth -= cam.armOffset; }
+			let D = exp(-dth * dth * cam.inv2Sig2);
+			let b = aA.w * (0.4 + ps * 0.6);
+			let inArm = select(0.0, 1.0, D >= 0.4);
+
+			let col = mix(vec3<f32>(0.70588, 0.82353, 1.0), vec3<f32>(1.0, 0.54902, 0.78431), inArm * cam.armTint);
+			let aTint = mix((1.0 - D) * b * 0.8, D * b, inArm);
+			let alphaVal = mix(b * 0.8, aTint, cam.armTint);
+
+			let pSize = cam.pointSize * max(ps, 0.2);
+			let clipPos = vec2<f32>(screen.x / cam.halfW, -screen.y / cam.halfH);
+			let offset = qc * vec2<f32>(pSize * 0.5 / cam.halfW, pSize * 0.5 / cam.halfH);
+
+			var out: StarVertexOutput;
+			out.position = vec4<f32>(clipPos + offset, 0.0, 1.0);
+			out.color = col;
+			out.alpha = alphaVal;
+			out.quadCoord = qc;
+			return out;
+		}
+
+		@fragment
+		fn fs_point(in: StarVertexOutput) -> @location(0) vec4<f32> {
+			let r2 = dot(in.quadCoord, in.quadCoord);
+			if (r2 > 1.0) { discard; }
+			let r = sqrt(r2);
+			let a = select(mix(0.4, 0.0, r * 2.0 - 1.0), mix(1.0, 0.4, r * 2.0), r < 0.5);
+			return vec4<f32>(in.color * (in.alpha * a), 1.0);
+		}
+	`;
+
+	const WGSL_BULGE = `
+		struct CameraUniforms {
+			cosR: f32,
+			sinR: f32,
+			cosT: f32,
+			sinT: f32,
+			scale: f32,
+			halfW: f32,
+			halfH: f32,
+			camDist: f32,
+			tanPitch: f32,
+			patternPhase: f32,
+			armOffset: f32,
+			inv2Sig2: f32,
+			eccMax: f32,
+			pointSize: f32,
+			armTint: f32,
+			_pad: f32,
+		};
+
+		struct StarVertexOutput {
+			@builtin(position) position: vec4<f32>,
+			@location(0) color: vec3<f32>,
+			@location(1) alpha: f32,
+			@location(2) quadCoord: vec2<f32>,
+		};
+
+		@group(0) @binding(0) var<uniform> cam: CameraUniforms;
+
+		@vertex
+		fn vs_bulge(
+			@builtin(vertex_index) vi: u32,
+			@location(0) th: f32,
+			@location(1) aA: vec3<f32>,
+			@location(2) aB: vec2<f32>
+		) -> StarVertexOutput {
+			var quad = array<vec2<f32>, 6>(
+				vec2<f32>(-1.0, -1.0),
+				vec2<f32>( 1.0, -1.0),
+				vec2<f32>(-1.0,  1.0),
+				vec2<f32>(-1.0,  1.0),
+				vec2<f32>( 1.0, -1.0),
+				vec2<f32>( 1.0,  1.0)
+			);
+			let qc = quad[vi];
+
+			let rho = aA.x * (1.0 + cam.eccMax * aA.y * cos(th - aA.z));
+			let x0 = rho * cos(th);
+			let y0 = rho * sin(th);
+			let cO = cos(aB.x);
+			let sO = sin(aB.x);
+			let x1 = x0 * cO - y0 * sO;
+			let y1 = x0 * sO + y0 * cO;
+			let cI = cos(aB.y);
+			let sI = sin(aB.y);
+			let px = x1;
+			let py = y1 * cI;
+			let pz = y1 * sI;
+
+			let rx = px * cam.cosR - py * cam.sinR;
+			let ry = px * cam.sinR + py * cam.cosR;
+			let pjy = ry * cam.cosT - pz * cam.sinT;
+			let pjz = ry * cam.sinT + pz * cam.cosT;
+
+			let ps = cam.camDist / (cam.camDist + pjz);
+			let screen = vec2<f32>(rx, pjy) * (cam.scale * ps);
+
+			let pSize = cam.pointSize * max(ps, 0.2);
+			let clipPos = vec2<f32>(screen.x / cam.halfW, -screen.y / cam.halfH);
+			let offset = qc * vec2<f32>(pSize * 0.5 / cam.halfW, pSize * 0.5 / cam.halfH);
+
+			var out: StarVertexOutput;
+			out.position = vec4<f32>(clipPos + offset, 0.0, 1.0);
+			out.color = vec3<f32>(1.0, 0.78431, 0.39216);
+			out.alpha = 0.8 * ps;
+			out.quadCoord = qc;
+			return out;
+		}
+
+		@fragment
+		fn fs_point(in: StarVertexOutput) -> @location(0) vec4<f32> {
+			let r2 = dot(in.quadCoord, in.quadCoord);
+			if (r2 > 1.0) { discard; }
+			let r = sqrt(r2);
+			let a = select(mix(0.4, 0.0, r * 2.0 - 1.0), mix(1.0, 0.4, r * 2.0), r < 0.5);
+			return vec4<f32>(in.color * (in.alpha * a), 1.0);
+		}
+	`;
+
+	const WGSL_FIELD = `
+		struct ArcData {
+			armPhase: f32,
+			thetaOff: f32,
+			alpha: f32,
+			size: f32,
+		};
+
+		struct FieldUniforms {
+			cosR: f32,
+			sinR: f32,
+			cosT: f32,
+			sinT: f32,
+			scale: f32,
+			halfW: f32,
+			halfH: f32,
+			camDist: f32,
+			tanPitch: f32,
+			patternPhase: f32,
+			ptScale: f32,
+			r0: f32,
+			r1: f32,
+			_pad0: f32,
+			_pad1: f32,
+			_pad2: f32,
+			arcs: array<ArcData, 35>,
+		};
+
+		struct FieldVertexOutput {
+			@builtin(position) position: vec4<f32>,
+			@location(0) color: vec3<f32>,
+			@location(1) alpha: f32,
+			@location(2) quadCoord: vec2<f32>,
+		};
+
+		@group(0) @binding(0) var<uniform> uField: FieldUniforms;
+
+		@vertex
+		fn vs_field(
+			@builtin(vertex_index) vi: u32,
+			@builtin(instance_index) ii: u32
+		) -> FieldVertexOutput {
+			var quad = array<vec2<f32>, 6>(
+				vec2<f32>(-1.0, -1.0),
+				vec2<f32>( 1.0, -1.0),
+				vec2<f32>(-1.0,  1.0),
+				vec2<f32>(-1.0,  1.0),
+				vec2<f32>( 1.0, -1.0),
+				vec2<f32>( 1.0,  1.0)
+			);
+			let qc = quad[vi];
+			let sampleIdx = ii % 1500u;
+			let arcIdx = ii / 1500u;
+			let arc = uField.arcs[arcIdx];
+			let aT = f32(sampleIdx) / (1500.0 - 1.0);
+
+			let r = mix(uField.r0, uField.r1, aT);
+			let bt = log(r) / uField.tanPitch + uField.patternPhase + arc.armPhase + arc.thetaOff;
+			let px = r * cos(bt);
+			let py = r * sin(bt);
+			let rx = px * uField.cosR - py * uField.sinR;
+			let ry = px * uField.sinR + py * uField.cosR;
+			let pjy = ry * uField.cosT;
+			let pjz = ry * uField.sinT;
+			let ps = uField.camDist / (uField.camDist + pjz);
+			let screen = vec2<f32>(rx, pjy) * (uField.scale * ps);
+
+			let pSize = arc.size * uField.ptScale * max(ps, 0.2);
+			let clipPos = vec2<f32>(screen.x / uField.halfW, -screen.y / uField.halfH);
+			let offset = qc * vec2<f32>(pSize * 0.5 / uField.halfW, pSize * 0.5 / uField.halfH);
+
+			let edge = smoothstep(0.0, 0.02, aT) * (1.0 - smoothstep(0.96, 1.0, aT));
+
+			var out: FieldVertexOutput;
+			out.position = vec4<f32>(clipPos + offset, 0.0, 1.0);
+			out.color = vec3<f32>(1.0, 0.31373, 0.58824);
+			out.alpha = arc.alpha * edge;
+			out.quadCoord = qc;
+			return out;
+		}
+
+		@fragment
+		fn fs_field(in: FieldVertexOutput) -> @location(0) vec4<f32> {
+			let r2 = dot(in.quadCoord, in.quadCoord);
+			if (r2 > 1.0) { discard; }
+			let fall = exp(-r2 * 4.0);
+			return vec4<f32>(in.color * (in.alpha * fall), 1.0);
+		}
+	`;
+
+	const WGSL_BG = `
+		struct QuadVertexOutput {
+			@builtin(position) position: vec4<f32>,
+			@location(0) uv: vec2<f32>,
+		};
+
+		@vertex
+		fn vs_quad(@builtin(vertex_index) vi: u32) -> QuadVertexOutput {
+			var pos = array<vec2<f32>, 3>(
+				vec2<f32>(-1.0, -1.0),
+				vec2<f32>( 3.0, -1.0),
+				vec2<f32>(-1.0,  3.0)
+			);
+			var out: QuadVertexOutput;
+			out.position = vec4<f32>(pos[vi], 0.0, 1.0);
+			out.uv = pos[vi] * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+			return out;
+		}
+
+		struct BgUniforms {
+			resolution: vec2<f32>,
+			glowR: f32,
+			mode: f32,
+			fade: f32,
+			_pad0: f32,
+			_pad1: f32,
+			_pad2: f32,
+		};
+
+		@group(0) @binding(0) var<uniform> uBg: BgUniforms;
+		@group(0) @binding(1) var uPrevTex: texture_2d<f32>;
+		@group(0) @binding(2) var uSampler: sampler;
+
+		@fragment
+		fn fs_bg(in: QuadVertexOutput) -> @location(0) vec4<f32> {
+			if (uBg.mode < 0.5) {
+				let pix = in.uv * uBg.resolution;
+				let c = uBg.resolution * 0.5;
+				let d1 = length(pix - c) / max(max(uBg.resolution.x, uBg.resolution.y), 1.0);
+				let bg = mix(vec3<f32>(0.03922, 0.01961, 0.07059), vec3<f32>(0.00784, 0.00392, 0.03137), clamp(d1, 0.0, 1.0));
+				let d2 = length(pix - c) / max(uBg.glowR, 1.0);
+				var gcol = vec3<f32>(0.0);
+				var ga = 0.0;
+				if (d2 < 0.3) {
+					let t = d2 / 0.3;
+					gcol = mix(vec3<f32>(1.0, 0.86275, 0.58824), vec3<f32>(1.0, 0.58824, 0.39216), t);
+					ga = mix(0.5, 0.15, t);
+				} else if (d2 < 1.0) {
+					let t = (d2 - 0.3) / 0.7;
+					gcol = mix(vec3<f32>(1.0, 0.58824, 0.39216), vec3<f32>(1.0, 0.39216, 0.19608), t);
+					ga = 0.15 * (1.0 - t);
+				}
+				let col = gcol * ga + bg * (1.0 - ga);
+				return vec4<f32>(col, 1.0);
+			} else {
+				let prev = textureSample(uPrevTex, uSampler, in.uv).rgb;
+				let col = prev * uBg.fade + vec3<f32>(0.01961, 0.00784, 0.03137) * (1.0 - uBg.fade);
+				return vec4<f32>(col, 1.0);
+			}
+		}
+	`;
+
+	const WGSL_PRESENT = `
+		struct VSOut {
+			@builtin(position) position: vec4f,
+			@location(0) uv: vec2f,
+		};
+
+		@vertex
+		fn vs_quad(@builtin(vertex_index) vi: u32) -> VSOut {
+			var positions = array<vec2f, 3>(
+				vec2f(-1.0, -1.0),
+				vec2f( 3.0, -1.0),
+				vec2f(-1.0,  3.0)
+			);
+			var out: VSOut;
+			out.position = vec4f(positions[vi], 0.0, 1.0);
+			out.uv = positions[vi] * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);
+			return out;
+		}
+
+		struct PresentUniforms {
+			exposure: f32,
+			saturation: f32,
+			headroom: f32,
+			_pad: f32,
+		};
+
+		@group(0) @binding(0) var<uniform> uGrad: PresentUniforms;
+		@group(0) @binding(1) var uSceneTex: texture_2d<f32>;
+		@group(0) @binding(2) var uSampler: sampler;
+
+		@fragment
+		fn fs_present(in: VSOut) -> @location(0) vec4f {
+			let raw = textureSample(uSceneTex, uSampler, in.uv).rgb;
+
+			// 1. Exposure (linear scaling of light intensity)
+			let c_exp = raw * uGrad.exposure;
+
+			// 2. Linear luminance (Rec. 709 primaries)
+			let lum = dot(c_exp, vec3f(0.2126, 0.7152, 0.0722));
+
+			// 3. Linear-light saturation adjustment
+			var c_sat = mix(vec3f(lum), c_exp, uGrad.saturation);
+			c_sat = max(c_sat, vec3f(0.0));
+
+			// 4. Color-Preserving HDR Highlight Compression
+			// Compresses peak intensity while preserving EXACT R:G:B ratios,
+			// PREVENTING STARS FROM BECOMING WHITE ABOVE 255 OF BRIGHTNESS!
+			// Values up to headroom H (e.g. 4.0) shine directly in HDR extended range.
+			let peak = max(c_sat.r, max(c_sat.g, c_sat.b));
+			let H = max(uGrad.headroom, 0.5);
+			let mappedPeak = (peak * H) * inverseSqrt(H * H + peak * peak);
+			let scale = select(1.0, mappedPeak / max(peak, 1e-6), peak > 0.0);
+			let c_hdr = c_sat * scale;
+
+			// Direct linear HDR values emitted to rgba16float extended canvas
+			// (values up to 4.0+ display in true physical HDR luminance)
+			return vec4f(c_hdr, 1.0);
+		}
+	`;
+
+	// ======== WEBGPU SETUP ========
+	let device, context;
+	let diskPipeline, bulgePipeline, fieldPipeline, bgPipeline, presentPipeline;
+	let diskThetaBuffer, diskStaticBuffer, bulgeThetaBuffer, bulgeStaticBuffer;
+	let diskCamBuffer, bulgeCamBuffer, fieldUniformBuffer, bgUniformBuffer, presentUniformBuffer;
+	let texSampler;
+
+	const fboTex = [null, null], fboViews = [null, null];
+	let bgBindGroups = [null, null], presentBindGroups = [null, null];
+	let diskBindGroup, bulgeBindGroup, fieldBindGroup;
+	let cur = 0;
+	let W = 0, H = 0, DPR = 1, fw = 0, fh = 0;
+	let gpuLost = false;
+	let hdrHeadroom = 1.0;
+
+	// Preallocated typed arrays for uniform uploads (no per-frame allocations)
+	const diskCamData = new Float32Array(16);
+	const bulgeCamData = new Float32Array(16);
+	const fieldUniformData = new Float32Array(156); // 16 header + 35 * 4 = 156 floats (624 bytes)
+	const bgUniformData = new Float32Array(8);
+	const presentUniformData = new Float32Array(4);
+
+	const scenePassDesc = {
+		colorAttachments: [{
+			view: null,
+			loadOp: 'clear',
+			clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+			storeOp: 'store'
+		}]
+	};
+
+	const presentPassDesc = {
+		colorAttachments: [{
+			view: null,
+			loadOp: 'clear',
+			clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+			storeOp: 'store'
+		}]
+	};
+
+	function showGpuFail(msg) {
+		const el = document.getElementById('gpufail');
+		if (el) {
+			if (msg) el.querySelector('.panel').innerHTML = '<b>WEBGPU HDR UNAVAILABLE</b><br><br>' + msg;
+			el.style.display = 'flex';
+		}
+	}
+
+	function updateHdrBadge() {
+		const hdrBadge = document.getElementById('hdr-badge-text');
+		if (hdrBadge) {
+			hdrBadge.textContent = hdrHeadroom > 1.0 ? ('WebGPU HDR · ' + hdrHeadroom.toFixed(1) + '× Extended') : 'WebGPU HDR · SDR (1.0×)';
+		}
+	}
+
+	async function initWebGPU() {
+		if (!navigator.gpu) {
+			showGpuFail('WebGPU is not supported in this browser.<br>Use Chrome 129+ with hardware acceleration enabled.');
+			return false;
+		}
+
+		let adapter;
+		try {
+			adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+		} catch (e) {
+			showGpuFail('Could not access WebGPU adapter: ' + e.message);
+			return false;
+		}
+
+		if (!adapter) {
+			showGpuFail('No suitable WebGPU adapter found.');
+			return false;
+		}
+
+		try {
+			device = await adapter.requestDevice();
+		} catch (e) {
+			showGpuFail('Could not create WebGPU device: ' + e.message);
+			return false;
+		}
+
+		device.lost.then((info) => {
+			console.warn('WebGPU device lost:', info.message);
+			gpuLost = true;
+			setTimeout(initWebGPU, 1000);
+		});
+
+		context = canvas.getContext('webgpu');
+		if (!context) {
+			showGpuFail('Could not get WebGPU canvas context.');
+			return false;
+		}
+
+		// Configure canvas for native HDR presentation (Chrome 129+)
+		const format = 'rgba16float';
+		const isHighDR = window.matchMedia && window.matchMedia('(dynamic-range: high)').matches;
+		hdrHeadroom = isHighDR ? 4.0 : 1.0;
+		const headroomSlider = document.getElementById('headroom');
+		const headroomVal = document.getElementById('headroom-val');
+		if (headroomSlider) headroomSlider.value = hdrHeadroom;
+		if (headroomVal) headroomVal.textContent = hdrHeadroom.toFixed(1) + '×';
+		updateHdrBadge();
+
+		const badgeEl = document.getElementById('hdr-badge-btn');
+		if (badgeEl) {
+			badgeEl.style.cursor = 'pointer';
+			badgeEl.title = 'Click to toggle HDR headroom (Extended 4.0× vs SDR 1.0×)';
+			badgeEl.addEventListener('click', () => {
+				hdrHeadroom = hdrHeadroom > 1.2 ? 1.0 : 4.0;
+				if (headroomSlider) headroomSlider.value = hdrHeadroom;
+				if (headroomVal) headroomVal.textContent = hdrHeadroom.toFixed(1) + '×';
+				updateHdrBadge();
+			});
+		}
+
+		try {
+			context.configure({
+				device,
+				format,
+				usage: GPUTextureUsage.RENDER_ATTACHMENT,
+				colorSpace: 'srgb',
+				toneMapping: {
+					mode: 'extended',
+				},
+				alphaMode: 'opaque',
+			});
+		} catch (e) {
+			console.warn('Extended toneMapping failed, falling back:', e);
+			context.configure({
+				device,
+				format,
+				usage: GPUTextureUsage.RENDER_ATTACHMENT,
+				colorSpace: 'srgb',
+				alphaMode: 'opaque',
+			});
+		}
+
+		// Compile shader modules
+		const diskModule = device.createShaderModule({ code: WGSL_DISK });
+		const bulgeModule = device.createShaderModule({ code: WGSL_BULGE });
+		const fieldModule = device.createShaderModule({ code: WGSL_FIELD });
+		const bgModule = device.createShaderModule({ code: WGSL_BG });
+		const presentModule = device.createShaderModule({ code: WGSL_PRESENT });
+
+		// Sampler for texture sampling
+		texSampler = device.createSampler({
+			minFilter: 'nearest',
+			magFilter: 'nearest',
+			addressModeU: 'clamp-to-edge',
+			addressModeV: 'clamp-to-edge'
+		});
+
+		// Vertex & Uniform buffers
+		diskThetaBuffer = device.createBuffer({
+			size: N_DISK * 4,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+		});
+		diskStaticBuffer = device.createBuffer({
+			size: diskStatic.byteLength,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+		});
+		device.queue.writeBuffer(diskStaticBuffer, 0, diskStatic);
+
+		bulgeThetaBuffer = device.createBuffer({
+			size: N_BULGE * 4,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+		});
+		bulgeStaticBuffer = device.createBuffer({
+			size: bulgeStatic.byteLength,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+		});
+		device.queue.writeBuffer(bulgeStaticBuffer, 0, bulgeStatic);
+
+		diskCamBuffer = device.createBuffer({
+			size: 64,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+		});
+		bulgeCamBuffer = device.createBuffer({
+			size: 64,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+		});
+		fieldUniformBuffer = device.createBuffer({
+			size: 624,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+		});
+		bgUniformBuffer = device.createBuffer({
+			size: 32,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+		});
+		presentUniformBuffer = device.createBuffer({
+			size: 16,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+		});
+
+		// Pipelines
+		const additiveBlend = {
+			color: { operation: 'add', srcFactor: 'one', dstFactor: 'one' },
+			alpha: { operation: 'add', srcFactor: 'zero', dstFactor: 'one' }
+		};
+
+		diskPipeline = device.createRenderPipeline({
+			layout: 'auto',
+			vertex: {
+				module: diskModule,
+				entryPoint: 'vs_disk',
+				buffers: [
+					{
+						arrayStride: 4,
+						stepMode: 'instance',
+						attributes: [{ shaderLocation: 0, offset: 0, format: 'float32' }]
+					},
+					{
+						arrayStride: 24,
+						stepMode: 'instance',
+						attributes: [
+							{ shaderLocation: 1, offset: 0, format: 'float32x4' },
+							{ shaderLocation: 2, offset: 16, format: 'float32x2' }
+						]
+					}
+				]
+			},
+			fragment: {
+				module: diskModule,
+				entryPoint: 'fs_point',
+				targets: [{ format: 'rgba16float', blend: additiveBlend }]
+			},
+			primitive: { topology: 'triangle-list' }
+		});
+
+		bulgePipeline = device.createRenderPipeline({
+			layout: 'auto',
+			vertex: {
+				module: bulgeModule,
+				entryPoint: 'vs_bulge',
+				buffers: [
+					{
+						arrayStride: 4,
+						stepMode: 'instance',
+						attributes: [{ shaderLocation: 0, offset: 0, format: 'float32' }]
+					},
+					{
+						arrayStride: 20,
+						stepMode: 'instance',
+						attributes: [
+							{ shaderLocation: 1, offset: 0, format: 'float32x3' },
+							{ shaderLocation: 2, offset: 12, format: 'float32x2' }
+						]
+					}
+				]
+			},
+			fragment: {
+				module: bulgeModule,
+				entryPoint: 'fs_point',
+				targets: [{ format: 'rgba16float', blend: additiveBlend }]
+			},
+			primitive: { topology: 'triangle-list' }
+		});
+
+		fieldPipeline = device.createRenderPipeline({
+			layout: 'auto',
+			vertex: {
+				module: fieldModule,
+				entryPoint: 'vs_field'
+			},
+			fragment: {
+				module: fieldModule,
+				entryPoint: 'fs_field',
+				targets: [{ format: 'rgba16float', blend: additiveBlend }]
+			},
+			primitive: { topology: 'triangle-list' }
+		});
+
+		bgPipeline = device.createRenderPipeline({
+			layout: 'auto',
+			vertex: {
+				module: bgModule,
+				entryPoint: 'vs_quad'
+			},
+			fragment: {
+				module: bgModule,
+				entryPoint: 'fs_bg',
+				targets: [{ format: 'rgba16float' }]
+			},
+			primitive: { topology: 'triangle-list' }
+		});
+
+		presentPipeline = device.createRenderPipeline({
+			layout: 'auto',
+			vertex: {
+				module: presentModule,
+				entryPoint: 'vs_quad'
+			},
+			fragment: {
+				module: presentModule,
+				entryPoint: 'fs_present',
+				targets: [{ format: 'rgba16float' }]
+			},
+			primitive: { topology: 'triangle-list' }
+		});
+
+		diskBindGroup = device.createBindGroup({
+			layout: diskPipeline.getBindGroupLayout(0),
+			entries: [{ binding: 0, resource: { buffer: diskCamBuffer } }]
+		});
+
+		bulgeBindGroup = device.createBindGroup({
+			layout: bulgePipeline.getBindGroupLayout(0),
+			entries: [{ binding: 0, resource: { buffer: bulgeCamBuffer } }]
+		});
+
+		fieldBindGroup = device.createBindGroup({
+			layout: fieldPipeline.getBindGroupLayout(0),
+			entries: [{ binding: 0, resource: { buffer: fieldUniformBuffer } }]
+		});
+
+		resize();
+		gpuLost = false;
+		return true;
+	}
+
+	function createTargets() {
+		if (!device) return;
+		for (let i = 0; i < 2; i++) {
+			if (fboTex[i]) fboTex[i].destroy();
+		}
+		fw = canvas.width;
+		fh = canvas.height;
+		for (let i = 0; i < 2; i++) {
+			fboTex[i] = device.createTexture({
+				size: [fw, fh],
+				format: 'rgba16float',
+				usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+			});
+			fboViews[i] = fboTex[i].createView();
+		}
+
+		// Bind groups for background/trails and present passes
+		for (let i = 0; i < 2; i++) {
+			bgBindGroups[i] = device.createBindGroup({
+				layout: bgPipeline.getBindGroupLayout(0),
+				entries: [
+					{ binding: 0, resource: { buffer: bgUniformBuffer } },
+					{ binding: 1, resource: fboViews[1 - i] },
+					{ binding: 2, resource: texSampler }
+				]
+			});
+
+			presentBindGroups[i] = device.createBindGroup({
+				layout: presentPipeline.getBindGroupLayout(0),
+				entries: [
+					{ binding: 0, resource: { buffer: presentUniformBuffer } },
+					{ binding: 1, resource: fboViews[i] },
+					{ binding: 2, resource: texSampler }
+				]
+			});
+		}
+		cur = 0;
+	}
+
+	function resize() {
+		DPR = Math.min(window.devicePixelRatio || 1, 2);
+		W = window.innerWidth;
+		H = window.innerHeight;
+		canvas.width = Math.max(1, Math.round(W * DPR));
+		canvas.height = Math.max(1, Math.round(H * DPR));
+		canvas.style.width = W + 'px';
+		canvas.style.height = H + 'px';
+		createTargets();
+	}
+	window.addEventListener('resize', resize);
+
+	// ======== PHYSICS ========
+	function update(dt) {
+		const inv_tan_pitch = 1.0 / Math.tan(pitch_deg * Math.PI / 180);
+		let arm_count = 0;
+
+		for (let i = 0; i < N_DISK; i++) {
+			const th = theta_arr[i];
+			const u = ecc_max * ecc_u_arr[i] * Math.cos(th - peri_arr[i]);
+			const rho = r_arr[i] * (1.0 + u);
+			let lu = (u - LOG1P_LO) * LOG1P_SCALE;
+			let li = lu | 0;
+			if (li < 0) li = 0;
+			else if (li > LOG1P_N - 1) li = LOG1P_N - 1;
+			const lf = lu - li;
+			const log_rho = logr_arr[i] + log1p_lut[li] + (log1p_lut[li + 1] - log1p_lut[li]) * lf;
+			const base_arm = log_rho * inv_tan_pitch + pattern_phase;
+			let delta = (th - base_arm) % arm_offset;
+			if (delta < 0) delta += arm_offset;
+			if (delta > arm_offset * 0.5) delta -= arm_offset;
+			const x = (delta * delta) * INV_SIGMA_SQ2;
+			let D = 0;
+			if (x < 20) {
+				const xf = x * EXP_SCALE, xi = xf | 0, ff = xf - xi;
+				D = exp_lut[xi] + (exp_lut[xi + 1] - exp_lut[xi]) * ff;
+			}
+			const omega = (V0 / (rho + 0.2)) * (1.0 - damping_strength * D);
+			let nth = th + omega * dt;
+			if (nth > TAU) nth -= TAU;
+			else if (nth < 0) nth += TAU;
+			theta_arr[i] = nth;
+			if (D > 0.4) arm_count++;
+		}
+		armCount = arm_count;
+
+		for (let i = 0; i < N_BULGE; i++) {
+			const th = bulge_theta[i];
+			const rho = bulge_r[i] * (1.0 + ecc_max * bulge_ecc_u[i] * Math.cos(th - bulge_peri[i]));
+			let nth = th + (1.5 / Math.max(0.2, rho)) * dt;
+			if (nth > TAU) nth -= TAU;
+			bulge_theta[i] = nth;
+		}
+	}
+
+	// ======== RENDER ========
+	function render(simDt) {
+		if (simDt > 0) {
+			update(simDt);
+			device.queue.writeBuffer(diskThetaBuffer, 0, theta_arr);
+			device.queue.writeBuffer(bulgeThetaBuffer, 0, bulge_theta);
+		}
+
+		const tan_pitch = Math.tan(pitch_deg * Math.PI / 180);
+		const scalePx = Math.min(W, H) / 14 * zoom * DPR;
+		const cosR = Math.cos(rotZ), sinR = Math.sin(rotZ);
+		const cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+
+		// Fill Camera Uniforms for Disk
+		diskCamData[0] = cosR;
+		diskCamData[1] = sinR;
+		diskCamData[2] = cosT;
+		diskCamData[3] = sinT;
+		diskCamData[4] = scalePx;
+		diskCamData[5] = fw * 0.5;
+		diskCamData[6] = fh * 0.5;
+		diskCamData[7] = CAM_DIST;
+		diskCamData[8] = tan_pitch;
+		diskCamData[9] = pattern_phase;
+		diskCamData[10] = arm_offset;
+		diskCamData[11] = INV_SIGMA_SQ2;
+		diskCamData[12] = ecc_max;
+		diskCamData[13] = 8.0 * DPR;
+		diskCamData[14] = armTint ? 1.0 : 0.0;
+		diskCamData[15] = 0.0;
+		device.queue.writeBuffer(diskCamBuffer, 0, diskCamData);
+
+		// Fill Camera Uniforms for Bulge
+		for (let i = 0; i < 16; i++) bulgeCamData[i] = diskCamData[i];
+		bulgeCamData[13] = 6.0 * DPR; // smaller bulge stars
+		device.queue.writeBuffer(bulgeCamBuffer, 0, bulgeCamData);
+
+		// Fill Background / Trails Uniforms
+		bgUniformData[0] = fw;
+		bgUniformData[1] = fh;
+		bgUniformData[2] = Math.min(W, H) * 0.15 * zoom * DPR;
+		bgUniformData[3] = showTrails ? 1.0 : 0.0;
+		bgUniformData[4] = 0.85; // fade factor
+		device.queue.writeBuffer(bgUniformBuffer, 0, bgUniformData);
+
+		// Fill Present Uniforms (Exposure + Saturation + Headroom)
+		presentUniformData[0] = SCENE_GAIN * Math.pow(2.0, exposure);
+		presentUniformData[1] = saturation;
+		presentUniformData[2] = hdrHeadroom;
+		presentUniformData[3] = 0.0;
+		device.queue.writeBuffer(presentUniformBuffer, 0, presentUniformData);
+
+		// Sync Field Arcs if dirty
+		if (instDirty) {
+			instDirty = false;
+			fieldUniformData[0] = cosR;
+			fieldUniformData[1] = sinR;
+			fieldUniformData[2] = cosT;
+			fieldUniformData[3] = sinT;
+			fieldUniformData[4] = scalePx;
+			fieldUniformData[5] = fw * 0.5;
+			fieldUniformData[6] = fh * 0.5;
+			fieldUniformData[7] = CAM_DIST;
+			fieldUniformData[8] = tan_pitch;
+			fieldUniformData[9] = pattern_phase;
+			fieldUniformData[10] = DPR;
+			fieldUniformData[11] = 0.5;
+			fieldUniformData[12] = 9.5;
+			let idx = 16;
+			let n = 0;
+			for (let arm = 0; arm < num_arms; arm++) {
+				const armPhase = arm * arm_offset;
+				for (let k = 0; k < FAN_N; k++) {
+					fieldUniformData[idx++] = armPhase;
+					fieldUniformData[idx++] = fanOff[k];
+					fieldUniformData[idx++] = fanAlpha[k];
+					fieldUniformData[idx++] = fanSize[k];
+					n++;
+				}
+			}
+			instN = n;
+			device.queue.writeBuffer(fieldUniformBuffer, 0, fieldUniformData);
+		} else if (showField) {
+			fieldUniformData[0] = cosR;
+			fieldUniformData[1] = sinR;
+			fieldUniformData[2] = cosT;
+			fieldUniformData[3] = sinT;
+			fieldUniformData[4] = scalePx;
+			fieldUniformData[5] = fw * 0.5;
+			fieldUniformData[6] = fh * 0.5;
+			fieldUniformData[7] = CAM_DIST;
+			fieldUniformData[8] = tan_pitch;
+			fieldUniformData[9] = pattern_phase;
+			fieldUniformData[10] = DPR;
+			device.queue.writeBuffer(fieldUniformBuffer, 0, fieldUniformData);
+		}
+
+		// Encode rendering commands
+		const encoder = device.createCommandEncoder();
+
+		// --- PASS 1: Offscreen HDR Scene (accumulates in 16-bit float) ---
+		scenePassDesc.colorAttachments[0].view = fboViews[cur];
+		const pass1 = encoder.beginRenderPass(scenePassDesc);
+
+		// 1. Background / Trails
+		pass1.setPipeline(bgPipeline);
+		pass1.setBindGroup(0, bgBindGroups[cur]);
+		pass1.draw(3, 1, 0, 0);
+
+		// 2. Slow Field Fan (if enabled)
+		if (showField) {
+			pass1.setPipeline(fieldPipeline);
+			pass1.setBindGroup(0, fieldBindGroup);
+			pass1.draw(6, FIELD_SAMPLES * instN, 0, 0);
+		}
+
+		// 3. Bulge Stars
+		pass1.setPipeline(bulgePipeline);
+		pass1.setBindGroup(0, bulgeBindGroup);
+		pass1.setVertexBuffer(0, bulgeThetaBuffer);
+		pass1.setVertexBuffer(1, bulgeStaticBuffer);
+		pass1.draw(6, N_BULGE, 0, 0);
+
+		// 4. Disk Stars
+		pass1.setPipeline(diskPipeline);
+		pass1.setBindGroup(0, diskBindGroup);
+		pass1.setVertexBuffer(0, diskThetaBuffer);
+		pass1.setVertexBuffer(1, diskStaticBuffer);
+		pass1.draw(6, N_DISK, 0, 0);
+
+		pass1.end();
+
+		// --- PASS 2: Canvas Presentation (Color-Preserving HDR Tonemapper) ---
+		presentPassDesc.colorAttachments[0].view = context.getCurrentTexture().createView();
+		const pass2 = encoder.beginRenderPass(presentPassDesc);
+		pass2.setPipeline(presentPipeline);
+		pass2.setBindGroup(0, presentBindGroups[cur]);
+		pass2.draw(3, 1, 0, 0);
+		pass2.end();
+
+		device.queue.submit([encoder.finish()]);
+		cur = 1 - cur;
+	}
+
+	// ======== INTERACTION ========
+	canvas.addEventListener('pointerdown', (e) => {
+		isDragging = true;
+		lastX = e.clientX;
+		lastY = e.clientY;
+		document.body.classList.add('dragging');
+		canvas.setPointerCapture(e.pointerId);
+	});
+	canvas.addEventListener('pointermove', (e) => {
+		if (!isDragging) return;
+		const dx = e.clientX - lastX;
+		const dy = e.clientY - lastY;
+		tRotZ -= dx * 0.005;
+		tTilt -= dy * 0.005;
+		tTilt = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, tTilt));
+		lastX = e.clientX;
+		lastY = e.clientY;
+	});
+	canvas.addEventListener('pointerup', (e) => {
+		isDragging = false;
+		document.body.classList.remove('dragging');
+		canvas.releasePointerCapture(e.pointerId);
+	});
+	canvas.addEventListener('wheel', (e) => {
+		e.preventDefault();
+		tZoom *= e.deltaY > 0 ? 0.92 : 1.08;
+		tZoom = Math.max(0.4, Math.min(3.0, tZoom));
+	}, { passive: false });
+
+	// ======== UI HOOKUPS ========
+	const speedSlider = document.getElementById('speed');
+	const speedVal = document.getElementById('speed-val');
+	speedSlider.addEventListener('input', () => {
+		speed = parseInt(speedSlider.value) / 100;
+		speedVal.textContent = speed.toFixed(2) + '×';
+	});
+
+	const dampSlider = document.getElementById('damp');
+	const dampVal = document.getElementById('damp-val');
+	dampSlider.addEventListener('input', () => {
+		damping_strength = parseInt(dampSlider.value) / 100;
+		dampVal.textContent = damping_strength.toFixed(2);
+	});
+
+	const eccSlider = document.getElementById('ecc');
+	const eccVal = document.getElementById('ecc-val');
+	eccSlider.addEventListener('input', () => {
+		ecc_max = parseInt(eccSlider.value) / 100;
+		eccVal.textContent = ecc_max.toFixed(2);
+	});
+
+	const omegaSlider = document.getElementById('omega');
+	const omegaVal = document.getElementById('omega-val');
+	omegaSlider.addEventListener('input', () => {
+		Omega_p = parseInt(omegaSlider.value) / 100;
+		omegaVal.textContent = Omega_p.toFixed(2);
+	});
+
+	const pitchSlider = document.getElementById('pitch');
+	const pitchVal = document.getElementById('pitch-val');
+	pitchSlider.addEventListener('input', () => {
+		pitch_deg = parseInt(pitchSlider.value);
+		pitchVal.textContent = pitch_deg + '°';
+	});
+
+	const armsSlider = document.getElementById('arms');
+	const armsVal = document.getElementById('arms-val');
+	armsSlider.addEventListener('input', () => {
+		num_arms = parseInt(armsSlider.value);
+		arm_offset = TAU / num_arms;
+		armsVal.textContent = num_arms;
+		instDirty = true;
+	});
+
+	const exposureSlider = document.getElementById('exposure');
+	const exposureVal = document.getElementById('exposure-val');
+	exposureSlider.addEventListener('input', () => {
+		exposure = parseFloat(exposureSlider.value);
+		exposureVal.textContent = (exposure >= 0 ? '+' : '') + exposure.toFixed(1) + ' EV';
+	});
+
+	const satSlider = document.getElementById('sat');
+	const satVal = document.getElementById('sat-val');
+	satSlider.addEventListener('input', () => {
+		saturation = parseFloat(satSlider.value);
+		satVal.textContent = saturation === 0 ? '0.00 (mono)' : saturation.toFixed(2) + '×';
+	});
+
+	const hrSlider = document.getElementById('headroom');
+	const hrVal = document.getElementById('headroom-val');
+	if (hrSlider) {
+		hrSlider.addEventListener('input', () => {
+			hdrHeadroom = parseFloat(hrSlider.value);
+			if (hrVal) hrVal.textContent = hdrHeadroom.toFixed(1) + '×';
+			updateHdrBadge();
+		});
+	}
+
+	const btnField = document.getElementById('btn-field');
+	btnField.addEventListener('click', () => {
+		showField = !showField;
+		btnField.classList.toggle('active', showField);
+	});
+
+	const btnTint = document.getElementById('btn-tint');
+	btnTint.addEventListener('click', () => {
+		armTint = !armTint;
+		btnTint.classList.toggle('active', armTint);
+	});
+
+	const btnTrails = document.getElementById('btn-trails');
+	btnTrails.addEventListener('click', () => {
+		showTrails = !showTrails;
+		btnTrails.classList.toggle('active', showTrails);
+	});
+
+	document.getElementById('btn-reset').addEventListener('click', () => {
+		tRotZ = 0;
+		tTilt = 1.2;
+		tZoom = 1.0;
+	});
+
+	document.getElementById('stat-stars').textContent = (N_DISK + N_BULGE).toLocaleString();
+	document.getElementById('cnt-disk').textContent = N_DISK.toLocaleString();
+	document.getElementById('cnt-bulge').textContent = N_BULGE.toLocaleString();
+	const statFps = document.getElementById('stat-fps');
+	const statOmega = document.getElementById('stat-omega');
+	const statPitch = document.getElementById('stat-pitch');
+	const cntArm = document.getElementById('cnt-arm');
+
+	// ======== ANIMATION LOOP ========
+	let lastTime = performance.now();
+	let fps = 0, frames = 0, fpsTime = 0;
+
+	function loop(now) {
+		const dt = Math.min(0.05, (now - lastTime) / 1000);
+		lastTime = now;
+
+		if (!gpuLost && device) {
+			rotZ += (tRotZ - rotZ) * 0.1;
+			tilt += (tTilt - tilt) * 0.1;
+			zoom += (tZoom - zoom) * 0.1;
+
+			const sim_dt = dt * speed * 0.5;
+			pattern_phase += Omega_p * sim_dt;
+			if (pattern_phase > TAU) pattern_phase -= TAU;
+
+			render(sim_dt);
+
+			frames++;
+			fpsTime += dt;
+			if (fpsTime >= 0.5) {
+				fps = Math.round(frames / fpsTime);
+				frames = 0;
+				fpsTime = 0;
+				statFps.textContent = fps;
+				statOmega.textContent = Omega_p.toFixed(2);
+				statPitch.textContent = pitch_deg + '°';
+				cntArm.textContent = armCount.toLocaleString();
+			}
+		}
+
+		requestAnimationFrame(loop);
+	}
+
+	initWebGPU().then((ok) => {
+		if (ok) requestAnimationFrame(loop);
+	});
+	</script>
+</body>
+</html>

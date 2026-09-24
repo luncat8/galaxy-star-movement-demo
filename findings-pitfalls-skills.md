@@ -355,3 +355,63 @@ fails too". Divide by SUM(m). Same class of rule: relative gates (radial
 peak/mean <= 1.25x "first run") must compare against a g=0 twin run in the
 SAME invocation (finding-5 rule, restated in 0.5.0 plan 4.3) or the baseline
 is whatever the previous script happened to leave in the machine.
+
+## 33. Real HDR in WebGL2: float FBO + Narkowicz ACES, and calibrate the default EV from a luma ratio
+
+"No fake HDR" means the scene accumulates in a float framebuffer (RGBA16F via
+`EXT_color_buffer_float`/`EXT_color_buffer_half_float`, both present on every
+Chrome 150+ GPU; fail loudly, no 8-bit path) and the present pass grades it:
+exposure `2^EV` -> luma-preserving saturation (`mix(vec3(l), c, sat)`,
+l = Rec.709 dot) in LINEAR light -> Narkowicz ACES fit
+`x(2.51x+.03)/(x(2.43x+.59)+.14)` -> exact sRGB transfer. ACES is monotone
+with the identity crossing near x~0.65: below ~0.5 it LIFTS (0.1->0.126),
+above it compresses (1->0.80, 2->0.915, ~8->1.0). Two traps: (1) a star
+sprite's per-pixel peak alpha is NOT its radiance — count overlaps, not
+sprite values; (2) the old 8-bit "additive into clamped byte" pipeline read
+like sRGB, so a faithful float port lands ~1.2-1.5 stops brighter in the
+mids unless you account for the sRGB encode — that is the honest cost of
+real HDR, not a bug to paper over with a magic dimming constant.
+Calibration that worked (both pages): measure core/disk median luma from the
+`--stats` replay (`experiments/smoke-page.js --stats`), then pick the default
+EV so the core median maps to ~0.89-0.93 (structure + colour survive, no
+pure-white plate) and the arm p90 stays >0.3. A 45:1 core/disk galaxy wants
+default EV ~ -0.7; a bright jam demo is fine at EV 0. Keep the range wide
+(-4..+2 / -3..+3): the slider's job is to trade core detail against disk
+brightness — verify both ends with the `--png` replay, not one snapshot.
+Uniform arrays come back from `getActiveUniform` as `name[0]` — stubs and
+uniform maps must key on that.
+
+## 34. WebGPU native HDR: extended canvas toneMapping and color-preserving highlight compression (why stars turned white above 255)
+
+In WebGL, canvas output is clamped to 8-bit SDR, and per-channel tone curves
+(like ACES) compress each RGB channel independently towards 1.0. When radiance
+accumulates beyond 1.0 (above 255 in 8-bit space), all three channels saturate
+to ~0.99, collapsing blue disk stars, hot pink arm jam stars, and golden bulge
+stars into chalk white. Furthermore, clamping on SDR displays burns highlights
+into white if any individual channel exceeds 1.0.
+
+Fixing this in WebGPU:
+1. Native HDR Canvas: Configure `canvas.getContext('webgpu')` with
+   `format: 'rgba16float'` and `toneMapping: { mode: 'extended' }`. This
+   transmits linear half-float radiance into the display's extended dynamic
+   range without standard SDR clipping.
+2. Chromaticity-Preserving Highlight Compression: In the present pass, do
+   NOT compress R, G, B independently. Instead, compress the peak channel
+   (or luminance) and scale all channels by the SAME factor:
+   `let peak = max(c_sat.r, max(c_sat.g, c_sat.b));`
+   `let mappedPeak = (peak * H) / (H + peak);`
+   `let scale = select(1.0, mappedPeak / max(peak, 1e-6), peak > 0.0);`
+   `let c_hdr = c_sat * scale;`
+   Since all three channels share the identical scaling ratio `scale`, the
+   chromaticity ratio (R : G : B) is 100% invariant across all brightness
+   levels. Even at 1,000x or 10,000x brightness, pink stays pink, blue stays
+   blue, and amber stays amber.
+3. Headroom calibration: `H = isHighDR ? 2.5 : 1.0`. On an SDR display,
+   `mappedPeak < 1.0`, so no channel ever clips to white. On an HDR display,
+   `mappedPeak < 2.5`, shining with physical peak HDR luminescence.
+4. Quad Point Sprites: WebGPU does not support `gl_PointSize` (the
+   `point-list` primitive is fixed to 1 pixel). Render star point sprites
+   as instanced camera-facing quads using `@builtin(vertex_index)` (6 vertices
+   per instance) with radial gaussian falloff and circular discard in the
+   fragment shader.
+
