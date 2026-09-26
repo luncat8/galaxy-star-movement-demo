@@ -1,5 +1,7 @@
 ## stars movement in galaxy
 
+![screenshot](screenshot.avif)
+
 fast math demo stars movement in galaxy, without calculate N body gravity.
 
 index.html - attempt to make prover math to recreate galaxy shapes. currently partially working, shapes are noisy and not stable, need to improve.
